@@ -177,7 +177,7 @@ those as makeshift comments by settings their values to arbitrary strings.
 .br
 "downloader": {
 .RS 4
-"retries": 3,
+"retries": 9,
 .br
 "timeout": 2.5
 .RE

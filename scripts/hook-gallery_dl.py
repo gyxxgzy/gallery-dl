@@ -18,6 +18,8 @@ hiddenimports.extend(
 )
 
 hiddenimports.append("yt_dlp")
+hiddenimports.append("socks")
+hiddenimports.append("urllib3.contrib.socks")
 
 mypyc = "81d243bd2c585b0f4821__mypyc"
 try:

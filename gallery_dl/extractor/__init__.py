@@ -238,6 +238,7 @@ modules = [
     "weebcentral",
     "weebdex",
     "weibo",
+    "wfolio",
     "whyp",
     "wikiart",
     "wikifeet",

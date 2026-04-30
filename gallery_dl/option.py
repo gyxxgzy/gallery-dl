@@ -480,7 +480,7 @@ def build_parser():
         "-R", "--retries",
         dest="retries", metavar="N", type=int, action=ConfigAction,
         help=("Maximum number of retries for failed HTTP requests "
-              "or -1 for infinite retries (default: 4)"),
+              "or -1 for infinite retries (default: 9)"),
     )
     networking.add_argument(
         "-a", "--user-agent",

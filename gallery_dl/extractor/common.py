@@ -472,7 +472,7 @@ class Extractor():
     def _init_options(self):
         self._write_pages = self.config("write-pages", False)
         self._retry_codes = self.config("retry-codes")
-        self._retries = self.config("retries", 4)
+        self._retries = self.config("retries", 9)
         self._timeout = self.config("timeout", 30)
         self._verify = self.config("verify", True)
         self._proxies = util.build_proxy_map(self.config("proxy"), self.log)
