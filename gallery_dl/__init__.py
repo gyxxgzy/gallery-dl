@@ -421,35 +421,91 @@ Entries:
 
             # process input URLs
             retval = 0
-            for url in input_manager:
-                try:
-                    log.debug("Starting %s for '%s'", jobtype.__name__, url)
+            concurrency = config.get((), "concurrency", 1)
+            if not isinstance(concurrency, int):
+                concurrency = 1
 
-                    if isinstance(url, ExtendedUrl):
-                        for opts in url.gconfig:
-                            config.set(*opts)
-                        with config.apply(url.lconfig):
-                            status = jobtype(url.value).run()
-                    else:
-                        status = jobtype(url).run()
+            if concurrency > 1:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                import threading
 
-                    if status:
-                        retval |= status
+                def _process_url(url):
+                    try:
+                        log.debug(
+                            "Starting %s for '%s'", jobtype.__name__, url)
+                        if isinstance(url, ExtendedUrl):
+                            for opts in url.gconfig:
+                                config.set(*opts)
+                            with config.apply(url.lconfig):
+                                status = jobtype(url.value).run()
+                        else:
+                            status = jobtype(url).run()
+                        return status
+                    except exception.RestartExtraction:
+                        log.debug("Restarting '%s'", url)
+                        return None
+                    except exception.NoExtractorError:
+                        log.error("Unsupported URL '%s'", url)
+                        return 64
+                    except exception.ControlException:
+                        return 0
+
+                lock = threading.Lock()
+                with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                    futures = {
+                        pool.submit(_process_url, url): url
+                        for url in input_manager
+                    }
+                    for future in as_completed(futures):
+                        url = futures[future]
+                        try:
+                            status = future.result()
+                        except Exception as exc:
+                            log.error(
+                                "%s: %s", exc.__class__.__name__, exc)
+                            status = 1
+
+                        if status:
+                            retval |= status
+                            with lock:
+                                input_manager.error()
+                        elif status is not None:
+                            with lock:
+                                input_manager.success()
+
+                        with lock:
+                            input_manager.next()
+            else:
+                for url in input_manager:
+                    try:
+                        log.debug(
+                            "Starting %s for '%s'", jobtype.__name__, url)
+
+                        if isinstance(url, ExtendedUrl):
+                            for opts in url.gconfig:
+                                config.set(*opts)
+                            with config.apply(url.lconfig):
+                                status = jobtype(url.value).run()
+                        else:
+                            status = jobtype(url).run()
+
+                        if status:
+                            retval |= status
+                            input_manager.error()
+                        else:
+                            input_manager.success()
+
+                    except exception.RestartExtraction:
+                        log.debug("Restarting '%s'", url)
+                        continue
+                    except exception.ControlException:
+                        pass
+                    except exception.NoExtractorError:
+                        log.error("Unsupported URL '%s'", url)
+                        retval |= 64
                         input_manager.error()
-                    else:
-                        input_manager.success()
 
-                except exception.RestartExtraction:
-                    log.debug("Restarting '%s'", url)
-                    continue
-                except exception.ControlException:
-                    pass
-                except exception.NoExtractorError:
-                    log.error("Unsupported URL '%s'", url)
-                    retval |= 64
-                    input_manager.error()
-
-                input_manager.next()
+                    input_manager.next()
             return retval
         return 0
 

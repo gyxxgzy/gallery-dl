@@ -549,7 +549,7 @@ def build_parser():
         "--concurrency",
         dest="concurrency", metavar="N", type=int,
         action=ConcurrencyAction,
-        help="Number of concurrent downloads (1-10, default: 1)",
+        help="Number of concurrent input URL downloads (1-10, default: 1)",
     )
     downloader.add_argument(
         "--no-part",
