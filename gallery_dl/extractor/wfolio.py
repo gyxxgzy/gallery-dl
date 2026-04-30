@@ -117,6 +117,10 @@ class WfolioExtractor(Extractor):
         piece_ids = re.findall(r'data-piece-id="(\d+)"', html)
         filenames = re.findall(
             r'data-gallery-title="([^"]+)"', html)
+        if not filenames:
+            filenames = re.findall(
+                r'class="piece__control piece__control--caption">'
+                r'([^<]+)', html)
         fallback_urls = self._extract_versions(html)
 
         base = {
@@ -126,20 +130,20 @@ class WfolioExtractor(Extractor):
             "count": len(piece_ids),
         }
 
-        for num, (piece_id, filename, fallback_url) in enumerate(
-                zip(piece_ids, filenames, fallback_urls), 1):
+        for num, piece_id in enumerate(piece_ids, 1):
             file_data = {
                 "piece_id": piece_id,
-                "filename": filename,
+                "filename": filenames[num - 1] if num - 1 < len(filenames)
+                            else str(piece_id),
                 "num": num,
             }
             text.nameext_from_url(
-                f"https://example.com/{filename}", file_data)
+                f"https://example.com/{file_data['filename']}", file_data)
             file_data.update(base)
 
             url = self._piece_download_url(project_slug, piece_id)
-            if not url and fallback_url:
-                url = fallback_url
+            if not url and num - 1 < len(fallback_urls):
+                url = fallback_urls[num - 1]
             if not url:
                 continue
 

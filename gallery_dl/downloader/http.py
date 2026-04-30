@@ -103,6 +103,7 @@ class HttpDownloader(DownloaderBase):
             if self.downloading:
                 output.stderr_write("\n")
             self.log.traceback(exc)
+            self.job._last_error = f"{exc.__class__.__name__}: {exc}"
             raise
         finally:
             # remove file from incomplete downloads
@@ -113,6 +114,7 @@ class HttpDownloader(DownloaderBase):
         response = None
         tries = code = 0
         msg = ""
+        self.job._last_error = None
 
         metadata = self.metadata
         kwdict = pathfmt.kwdict
@@ -135,6 +137,7 @@ class HttpDownloader(DownloaderBase):
 
                 self.log.warning("%s (%s/%s)", msg, tries, self.retries+1)
                 if tries > self.retries:
+                    self.job._last_error = msg
                     return False
 
                 if code == 429 and self.interval_429:
@@ -184,6 +187,7 @@ class HttpDownloader(DownloaderBase):
                 continue
             except Exception as exc:
                 self.log.warning(exc)
+                self.job._last_error = str(exc)
                 return False
 
             # check response
@@ -211,6 +215,7 @@ class HttpDownloader(DownloaderBase):
                     continue
                 self.release_conn(response)
                 self.log.warning(msg)
+                self.job._last_error = msg
                 return False
 
             # check for invalid responses
@@ -228,14 +233,18 @@ class HttpDownloader(DownloaderBase):
                 if not result:
                     self.release_conn(response)
                     self.log.warning("Invalid response")
+                    self.job._last_error = "Invalid response"
                     return False
             if self.validate_html and response.headers.get(
                     "content-type", "").startswith("text/html") and \
                     pathfmt.extension not in ("html", "htm"):
                 if response.history:
                     self.log.warning("HTTP redirect to '%s'", response.url)
+                    self.job._last_error = \
+                        f"HTTP redirect to '{response.url}'"
                 else:
                     self.log.warning("HTML response")
+                    self.job._last_error = "HTML response"
                 return False
 
             # check file size
@@ -244,6 +253,7 @@ class HttpDownloader(DownloaderBase):
                 if not size:
                     self.release_conn(response)
                     self.log.warning("Empty file")
+                    self.job._last_error = "Empty file"
                     return False
                 if self.minsize and size < self.minsize:
                     self.release_conn(response)
@@ -309,8 +319,9 @@ class HttpDownloader(DownloaderBase):
                     result = validate_sig(file_header)
                     if result is not True:
                         self.release_conn(response)
-                        self.log.warning(
-                            result or "Invalid file signature bytes")
+                        sigmsg = result or "Invalid file signature bytes"
+                        self.log.warning(sigmsg)
+                        self.job._last_error = sigmsg
                         return False
                 if validate_ext and self._adjust_extension(
                         pathfmt, file_header) and pathfmt.exists():
@@ -351,6 +362,7 @@ class HttpDownloader(DownloaderBase):
                     continue
                 except exception.StopExtraction:
                     response.close()
+                    self.job._last_error = "Download stopped"
                     return False
                 except exception.ControlException:
                     response.close()

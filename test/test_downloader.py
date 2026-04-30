@@ -37,6 +37,8 @@ class FakeJob():
         self.pathfmt = path.PathFormat(self.extractor)
         self.out = output.NullOutput()
         self.get_logger = logging.getLogger
+        self._last_error = None
+        self._download_errors = {}
 
 
 class TestDownloaderModule(unittest.TestCase):

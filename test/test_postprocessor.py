@@ -39,6 +39,8 @@ class FakeJob():
         self.get_logger = logging.getLogger
         self.hooks = collections.defaultdict(list)
         self.status = 0
+        self._last_error = None
+        self._download_errors = {}
 
     def register_hooks(self, hooks, options=None):
         for hook, callback in hooks.items():

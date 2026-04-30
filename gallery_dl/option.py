@@ -21,6 +21,14 @@ class ConfigAction(argparse.Action):
         namespace.options.append(((), self.dest, values))
 
 
+class ConcurrencyAction(argparse.Action):
+    """Validate --concurrency range (1-10)"""
+    def __call__(self, parser, namespace, values, option_string=None):
+        if not (1 <= values <= 10):
+            parser.error("--concurrency must be between 1 and 10")
+        namespace.options.append(((), self.dest, values))
+
+
 class ConfigConstAction(argparse.Action):
     """Set argparse const values as config values"""
     def __call__(self, parser, namespace, values, option_string=None):
@@ -536,6 +544,12 @@ def build_parser():
         "--chunk-size",
         dest="chunk-size", metavar="SIZE", action=ConfigAction,
         help="Size of in-memory data chunks (default: 32k)",
+    )
+    downloader.add_argument(
+        "--concurrency",
+        dest="concurrency", metavar="N", type=int,
+        action=ConcurrencyAction,
+        help="Number of concurrent downloads (1-10, default: 1)",
     )
     downloader.add_argument(
         "--no-part",

@@ -7,6 +7,7 @@
 # published by the Free Software Foundation.
 
 import sys
+import os
 import errno
 import logging
 import functools
@@ -30,6 +31,73 @@ from . import (
 from .extractor.message import Message
 stdout_write = output.stdout_write
 FLAGS = util.FLAGS
+
+
+class _LockedOutput:
+    """Thread-safe output wrapper for concurrent downloads"""
+    __slots__ = ("_out", "_lock")
+
+    def __init__(self, out, lock):
+        self._out = out
+        self._lock = lock
+
+    def start(self, path):
+        with self._lock:
+            self._out.start(path)
+
+    def skip(self, path):
+        with self._lock:
+            self._out.skip(path)
+
+    def success(self, path):
+        with self._lock:
+            self._out.success(path)
+
+    def progress(self, bytes_total, bytes_downloaded, bytes_per_second):
+        with self._lock:
+            self._out.progress(
+                bytes_total, bytes_downloaded, bytes_per_second)
+
+
+class _WorkerLogger:
+    """Logger wrapper providing traceback() for worker threads"""
+    __slots__ = ("_logger",)
+
+    def __init__(self, logger):
+        self._logger = logger
+
+    def traceback(self, exc):
+        self._logger.debug("", exc_info=exc)
+
+    def debug(self, msg, *args):
+        self._logger.debug(msg, *args)
+
+    def info(self, msg, *args):
+        self._logger.info(msg, *args)
+
+    def warning(self, msg, *args):
+        self._logger.warning(msg, *args)
+
+    def error(self, msg, *args):
+        self._logger.error(msg, *args)
+
+
+class _DownloadWorkerJob:
+    """Minimal job proxy for downloader instances in worker threads"""
+    __slots__ = ("extractor", "out", "_last_error", "_loggers")
+
+    def __init__(self, extractor, locked_out):
+        self.extractor = extractor
+        self.out = locked_out
+        self._last_error = None
+        self._loggers = {}
+
+    def get_logger(self, name):
+        if name not in self._loggers:
+            import logging
+            logger = logging.getLogger(name)
+            self._loggers[name] = _WorkerLogger(logger)
+        return self._loggers[name]
 
 
 class Job():
@@ -414,6 +482,15 @@ class DownloadJob(Job):
         self.visited = set() if parent is None else parent.visited
         self._extractor_filter = None
         self._skipcnt = 0
+        self._last_error = None
+        self._download_errors = {}
+        concurrency = config.get((), "concurrency", 1)
+        self._concurrency = concurrency if isinstance(concurrency, int) else 1
+
+    def dispatch(self, messages):
+        if self._concurrency > 1:
+            return self._dispatch_concurrent(messages)
+        return Job.dispatch(self, messages)
 
     def handle_url(self, url, kwdict):
         """Download the resource specified in 'url'"""
@@ -474,6 +551,8 @@ class DownloadJob(Job):
         if failed:
             self.status |= 4
             self.log.error("Failed to download %s", pathfmt.filename or url)
+            error_msg = self._last_error or "Unknown error"
+            self._record_download_error(url, error_msg)
             if "error" in hooks:
                 for callback in hooks["error"]:
                     callback(pathfmt)
@@ -495,6 +574,8 @@ class DownloadJob(Job):
             FLAGS.DOWNLOAD = None
             self.status |= 4
             self.log.error("Failed to download %s", pathfmt.filename or url)
+            error_msg = self._last_error or "Download interrupted"
+            self._record_download_error(url, error_msg)
             if "error" in hooks:
                 for callback in hooks["error"]:
                     callback(pathfmt)
@@ -522,7 +603,11 @@ class DownloadJob(Job):
                     callback(self.pathfmt)
             if FLAGS.POST is not None:
                 FLAGS.process("POST")
+            old_dir = self.pathfmt.realdirectory
             self.pathfmt.set_directory(kwdict)
+            new_dir = self.pathfmt.realdirectory
+            if old_dir and new_dir and old_dir != new_dir:
+                self._write_error_logs(old_dir)
         if "post" in self.hooks:
             for callback in self.hooks["post"]:
                 callback(self.pathfmt)
@@ -631,6 +716,9 @@ class DownloadJob(Job):
 
             self.extractor.cookies_store()
 
+            if pathfmt.realdirectory:
+                self._write_error_logs(pathfmt.realdirectory)
+
             if self.status:
                 if "finalize-error" in hooks:
                     for callback in hooks["finalize-error"]:
@@ -642,6 +730,8 @@ class DownloadJob(Job):
             if "finalize" in hooks:
                 for callback in hooks["finalize"]:
                     callback(pathfmt)
+
+        self._flush_error_logs()
 
     def handle_skip(self):
         pathfmt = self.pathfmt
@@ -661,16 +751,56 @@ class DownloadJob(Job):
 
     def download(self, url):
         """Download 'url'"""
+        self._last_error = None
         if downloader := self.get_downloader(url[:url.find(":")]):
             try:
                 return downloader.download(url, self.pathfmt)
             except OSError as exc:
                 if exc.errno == errno.ENOSPC:
                     raise
+                self._last_error = \
+                    f"{exc.__class__.__name__}: {exc}"
                 self.log.warning("%s: %s", exc.__class__.__name__, exc)
                 return False
         self._write_unsupported(url)
+        self._last_error = "Unsupported URL scheme"
         return False
+
+    def _record_download_error(self, url, error_msg):
+        """Record a download error for the current directory"""
+        if self.pathfmt is None:
+            return
+        directory = self.pathfmt.realdirectory
+        if not directory:
+            return
+        if directory not in self._download_errors:
+            self._download_errors[directory] = []
+        self._download_errors[directory].append((url, error_msg))
+
+    def _write_error_logs(self, directory):
+        """Write error log files to the specified directory"""
+        if directory not in self._download_errors:
+            return
+        errors = self._download_errors[directory]
+        if not errors:
+            return
+
+        error_log_path = os.path.join(directory, "download_error.log")
+        with open(error_log_path, "a", encoding="utf-8") as f:
+            for url, msg in errors:
+                f.write("URL: {}\nError: {}\n\n".format(url, msg))
+
+        link_log_path = os.path.join(directory, "error_link.log")
+        with open(link_log_path, "a", encoding="utf-8") as f:
+            for url, _ in errors:
+                f.write("{}\n".format(url))
+
+        del self._download_errors[directory]
+
+    def _flush_error_logs(self):
+        """Write all pending error logs to their directories"""
+        for directory in list(self._download_errors):
+            self._write_error_logs(directory)
 
     def get_downloader(self, scheme):
         """Return a downloader suitable for 'scheme'"""
@@ -872,6 +1002,303 @@ class DownloadJob(Job):
                 clist = (self.extractor.category,)
 
         return util.build_extractor_filter(clist, negate, special)
+
+    def _dispatch_concurrent(self, messages):
+        """Process extractor messages with concurrent URL downloads"""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        msg = None
+        process = True
+        metadata_url = self.metadata_url
+
+        if follow := self.extractor.config("follow"):
+            follow = formatter.parse(follow, None, util.identity).format_map
+            follow_urls = follow_kwdict = None
+        else:
+            follow = follow_urls = None
+
+        pool = ThreadPoolExecutor(max_workers=self._concurrency)
+        futures = []
+        lock = threading.Lock()
+
+        def _await_futures():
+            nonlocal futures
+            for future, _url, _kwdict in futures:
+                try:
+                    future.result()
+                except (exception.StopExtraction,
+                        exception.TerminateExtraction,
+                        SystemExit):
+                    raise
+                except Exception:
+                    pass
+            futures.clear()
+
+        try:
+            for msg, url, kwdict in messages:
+
+                if msg == Message.Directory:
+                    _await_futures()
+
+                    if follow_urls is not None:
+                        for furl in follow_urls:
+                            if metadata_url is not None:
+                                follow_kwdict[metadata_url] = furl
+                            if self.pred_queue(furl, follow_kwdict):
+                                self.handle_queue(furl, follow_kwdict)
+                        follow_urls = None
+
+                    self.update_kwdict(kwdict)
+                    if self.pred_post(url, kwdict):
+                        process = True
+                        self.handle_directory(kwdict)
+                        if follow is not None:
+                            follow_urls = self._collect_urls(
+                                follow(kwdict))
+                            if follow_urls is not None:
+                                follow_kwdict = kwdict.copy()
+                    else:
+                        process = None
+                    if FLAGS.POST is not None:
+                        FLAGS.process("POST")
+
+                elif process is None:
+                    continue
+                elif FLAGS.POST is False:
+                    FLAGS.POST = process = None
+                    continue
+
+                elif msg == Message.Url:
+                    if metadata_url is not None:
+                        kwdict[metadata_url] = url
+                    self.update_kwdict(kwdict)
+                    if self.pred_url(url, kwdict):
+                        if FLAGS.FILE is False:
+                            FLAGS.FILE = None
+                            continue
+                        future = pool.submit(
+                            self._download_worker, url, kwdict, lock)
+                        futures.append((future, url, kwdict))
+                    if FLAGS.FILE is not None:
+                        FLAGS.process("FILE")
+
+                elif msg == Message.Queue:
+                    _await_futures()
+
+                    self.update_kwdict(kwdict)
+                    if metadata_url is not None:
+                        kwdict[metadata_url] = url
+                    if self.pred_queue(url, kwdict):
+                        if FLAGS.CHILD is False:
+                            FLAGS.CHILD = None
+                            continue
+                        self.handle_queue(url, kwdict)
+                    if FLAGS.CHILD is not None:
+                        FLAGS.process("CHILD")
+
+            _await_futures()
+
+            if follow_urls is not None:
+                for furl in follow_urls:
+                    if metadata_url is not None:
+                        follow_kwdict[metadata_url] = furl
+                    if self.pred_queue(furl, follow_kwdict):
+                        self.handle_queue(furl, follow_kwdict)
+
+        finally:
+            pool.shutdown(wait=True)
+
+        return msg
+
+    def _download_worker(self, url, kwdict, lock):
+        """Download a single URL in a worker thread"""
+        pathfmt = self.pathfmt.clone()
+        locked_out = _LockedOutput(self.out, lock)
+        worker_job = _DownloadWorkerJob(self.extractor, locked_out)
+        worker_downloaders = {}
+
+        hooks = self.hooks
+        archive = self.archive
+
+        pathfmt.set_filename(kwdict)
+
+        if "prepare" in hooks:
+            for callback in hooks["prepare"]:
+                callback(pathfmt)
+
+        if archive is not None:
+            with lock:
+                if archive.check(kwdict):
+                    pathfmt.fix_extension()
+                    self._handle_skip_worker(pathfmt, lock)
+                    return
+
+        if pathfmt.extension and not self.metadata_http:
+            pathfmt.build_path()
+            if pathfmt.exists():
+                if archive is not None and self._archive_write_skip:
+                    with lock:
+                        archive.add(kwdict)
+                self._handle_skip_worker(pathfmt, lock)
+                return
+
+        if "prepare-after" in hooks:
+            for callback in hooks["prepare-after"]:
+                callback(pathfmt)
+            if kwdict.pop("_file_recheck", False) and pathfmt.exists():
+                if archive is not None and self._archive_write_skip:
+                    with lock:
+                        archive.add(kwdict)
+                self._handle_skip_worker(pathfmt, lock)
+                return
+
+        if self.sleep is not None:
+            self.extractor.sleep(self.sleep(), "download")
+
+        failed = False
+        try:
+            if not self._download_url_worker(
+                    url, pathfmt, worker_job, worker_downloaders):
+                fallback = kwdict.get(
+                    "_fallback", ()) if self.fallback else ()
+                for num, furl in enumerate(fallback, 1):
+                    util.remove_file(pathfmt.temppath)
+                    self.log.info(
+                        "Trying fallback URL #%d", num)
+                    if self._download_url_worker(
+                            furl, pathfmt, worker_job,
+                            worker_downloaders):
+                        break
+                else:
+                    failed = True
+        except exception.StopDownload:
+            failed = True
+
+        if failed:
+            with lock:
+                self.status |= 4
+            self.log.error("Failed to download %s",
+                           pathfmt.filename or url)
+            error_msg = worker_job._last_error or "Unknown error"
+            with lock:
+                self._record_download_error_locked(
+                    url, error_msg, pathfmt.realdirectory)
+            if "error" in hooks:
+                for callback in hooks["error"]:
+                    callback(pathfmt)
+            return
+
+        if not pathfmt.temppath:
+            if archive is not None and self._archive_write_skip:
+                with lock:
+                    archive.add(kwdict)
+            self._handle_skip_worker(pathfmt, lock)
+            return
+
+        if "file" in hooks:
+            for callback in hooks["file"]:
+                callback(pathfmt)
+
+        if FLAGS.DOWNLOAD is not None:
+            with lock:
+                FLAGS.DOWNLOAD = None
+                self.status |= 4
+            self.log.error("Failed to download %s",
+                           pathfmt.filename or url)
+            error_msg = worker_job._last_error or "Download interrupted"
+            with lock:
+                self._record_download_error_locked(
+                    url, error_msg, pathfmt.realdirectory)
+            if "error" in hooks:
+                for callback in hooks["error"]:
+                    callback(pathfmt)
+            return
+
+        pathfmt.finalize()
+        locked_out.success(pathfmt.path)
+        with lock:
+            self._skipcnt = 0
+            if archive is not None and self._archive_write_file:
+                archive.add(kwdict)
+        if "after" in hooks:
+            for callback in hooks["after"]:
+                callback(pathfmt)
+        if archive is not None and self._archive_write_after:
+            with lock:
+                archive.add(kwdict)
+
+    def _download_url_worker(self, url, pathfmt, worker_job,
+                             worker_downloaders):
+        """Download 'url' using thread-local downloaders"""
+        worker_job._last_error = None
+        scheme = url[:url.find(":")]
+        downloader = self._get_worker_downloader(
+            scheme, worker_job, worker_downloaders)
+        if downloader:
+            try:
+                return downloader.download(url, pathfmt)
+            except OSError as exc:
+                if exc.errno == errno.ENOSPC:
+                    raise
+                worker_job._last_error = \
+                    f"{exc.__class__.__name__}: {exc}"
+                self.log.warning(
+                    "%s: %s", exc.__class__.__name__, exc)
+                return False
+        self._write_unsupported(url)
+        worker_job._last_error = "Unsupported URL scheme"
+        return False
+
+    def _get_worker_downloader(self, scheme, worker_job,
+                               worker_downloaders):
+        """Return a thread-local downloader for 'scheme'"""
+        import requests
+        try:
+            return worker_downloaders[scheme]
+        except KeyError:
+            pass
+
+        cls = downloader.find(scheme)
+        if cls and config.get(
+                ("downloader", cls.scheme), "enabled", True):
+            instance = cls(worker_job)
+            instance.session = requests.Session()
+        else:
+            instance = None
+            self.log.error(
+                "'%s:' URLs are not supported/enabled", scheme)
+
+        if cls and cls.scheme == "http":
+            worker_downloaders["http"] = \
+                worker_downloaders["https"] = instance
+        else:
+            worker_downloaders[scheme] = instance
+        return instance
+
+    def _handle_skip_worker(self, pathfmt, lock):
+        """Handle a skipped download in a worker thread"""
+        if "skip" in self.hooks:
+            for callback in self.hooks["skip"]:
+                callback(pathfmt)
+        with lock:
+            self.out.skip(pathfmt.path)
+            if self._skipexc is not None:
+                if (self._skipftr is None or
+                        self._skipftr(pathfmt.kwdict)):
+                    self._skipcnt += 1
+                    if self._skipcnt >= self._skipmax:
+                        raise self._skipexc
+        if self.sleep_skip is not None:
+            self.extractor.sleep(self.sleep_skip(), "skip")
+
+    def _record_download_error_locked(self, url, error_msg, directory):
+        """Record a download error (caller must hold lock)"""
+        if not directory:
+            return
+        if directory not in self._download_errors:
+            self._download_errors[directory] = []
+        self._download_errors[directory].append((url, error_msg))
 
 
 def _call_hook_condition(callback, condition, pathfmt):

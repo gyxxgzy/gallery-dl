@@ -19,6 +19,7 @@ class DownloaderBase():
 
     def __init__(self, job):
         extractor = job.extractor
+        self.job = job
         self.log = job.get_logger("downloader." + self.scheme)
 
         if opts := self._extractor_config(extractor):

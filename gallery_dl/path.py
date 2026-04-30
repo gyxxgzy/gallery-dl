@@ -146,6 +146,20 @@ class PathFormat():
             basedir += os.sep
         return self.clean_path(basedir)
 
+    def clone(self):
+        """Return a shallow copy for use in worker threads"""
+        import copy
+        pf = copy.copy(self)
+        pf.kwdict = {}
+        pf.filename = ""
+        pf.extension = ""
+        pf.path = ""
+        pf.realpath = ""
+        pf.temppath = ""
+        pf.prefix = ""
+        pf.delete = False
+        return pf
+
     def __str__(self):
         return self.realpath
 
@@ -157,7 +171,7 @@ class PathFormat():
             if "r" in mode:
                 # '.part' file no longer exists
                 return util.NullContext()
-            os.makedirs(self.realdirectory)
+            os.makedirs(self.realdirectory, exist_ok=True)
             return open(self.temppath, mode)
 
     def exists(self):

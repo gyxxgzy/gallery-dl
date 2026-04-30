@@ -61,6 +61,8 @@ class YoutubeDLDownloader(DownloaderBase):
                                        getattr(exc, "name", ""))
                     self.log.traceback(exc)
                     self.download = lambda u, p: False
+                    self.job._last_error = \
+                        f"Cannot import module '{getattr(exc, 'name', '')}'"
                     return False
 
                 try:
@@ -116,8 +118,10 @@ class YoutubeDLDownloader(DownloaderBase):
                     self.log.error("%s (%s/%s)", msg, tries, self.retries+1)
                 else:
                     self.log.error(msg)
+                    self.job._last_error = msg
                     return False
                 if tries > self.retries:
+                    self.job._last_error = msg
                     return False
 
         if extra := kwdict.get("_ytdl_extra"):
@@ -154,8 +158,10 @@ class YoutubeDLDownloader(DownloaderBase):
                 self.log.error("%s (%s/%s)", msg, tries, self.retries+1)
             else:
                 self.log.error(msg)
+                self.job._last_error = msg
                 return False
             if tries > self.retries:
+                self.job._last_error = msg
                 return False
         return True
 
