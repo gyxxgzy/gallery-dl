@@ -451,6 +451,9 @@ Entries:
                     except exception.ControlException:
                         return 0
 
+                import random, time as _time
+                _stagger = 0.2
+
                 lock = threading.Lock()
                 with ThreadPoolExecutor(max_workers=concurrency) as pool:
                     pending = {}
@@ -460,14 +463,17 @@ Entries:
                         try:
                             url = next(url_iter)
                         except StopIteration:
-                            return
+                            return False
                         ctx = (input_manager._item, input_manager._url)
                         input_manager.next()
                         pending[pool.submit(
                             _process_url, url)] = (url, ctx)
+                        return True
 
                     for _ in range(concurrency):
-                        _submit_next()
+                        if _submit_next():
+                            _time.sleep(
+                                random.uniform(_stagger, _stagger * 3))
 
                     while pending:
                         done, _ = wait(
