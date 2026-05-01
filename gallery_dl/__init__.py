@@ -426,7 +426,8 @@ Entries:
                 concurrency = 1
 
             if concurrency > 1:
-                from concurrent.futures import ThreadPoolExecutor, as_completed
+                from concurrent.futures import ThreadPoolExecutor, \
+                    FIRST_COMPLETED, wait
                 import threading
 
                 def _process_url(url):
@@ -452,29 +453,45 @@ Entries:
 
                 lock = threading.Lock()
                 with ThreadPoolExecutor(max_workers=concurrency) as pool:
-                    futures = {
-                        pool.submit(_process_url, url): url
-                        for url in input_manager
-                    }
-                    for future in as_completed(futures):
-                        url = futures[future]
+                    pending = {}
+                    url_iter = iter(input_manager)
+
+                    def _submit_next():
                         try:
-                            status = future.result()
-                        except Exception as exc:
-                            log.error(
-                                "%s: %s", exc.__class__.__name__, exc)
-                            status = 1
+                            url = next(url_iter)
+                        except StopIteration:
+                            return
+                        ctx = (input_manager._item, input_manager._url)
+                        input_manager.next()
+                        pending[pool.submit(
+                            _process_url, url)] = (url, ctx)
 
-                        if status:
-                            retval |= status
-                            with lock:
-                                input_manager.error()
-                        elif status is not None:
-                            with lock:
-                                input_manager.success()
+                    for _ in range(concurrency):
+                        _submit_next()
 
-                        with lock:
-                            input_manager.next()
+                    while pending:
+                        done, _ = wait(
+                            pending, return_when=FIRST_COMPLETED)
+                        for future in done:
+                            url, (item, url_str) = pending.pop(future)
+                            try:
+                                status = future.result()
+                            except Exception as exc:
+                                log.error(
+                                    "%s: %s",
+                                    exc.__class__.__name__, exc)
+                                status = 1
+
+                            with lock:
+                                input_manager._item = item
+                                input_manager._url = url_str
+                                if status:
+                                    retval |= status
+                                    input_manager.error()
+                                elif status is not None:
+                                    input_manager.success()
+
+                            _submit_next()
             else:
                 for url in input_manager:
                     try:
