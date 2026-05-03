@@ -251,6 +251,7 @@ modules = [
     "yiffverse",
     "yourlesbians",
     "zerochan",
+    "zishy",
     "booru",
     "moebooru",
     "foolfuuka",
