@@ -32,7 +32,7 @@ class ZishyAlbumExtractor(GalleryExtractor):
         self.page_url = self.url
 
     def _init(self):
-        self._want_zip = self.config("zip", False)
+        self._want_zip = self.config("zip", True)
         self._want_video = self.config("videos", True)
 
     def metadata(self, page):

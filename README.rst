@@ -2,11 +2,6 @@
 gallery-dl
 ==========
 
-基于大佬mikf的个人修改版本，所有代码均基于Claude Code完成，主要根据自身需求出发借助AI进行修改。
--------------------------------------
-2026.4.30
-支持了类似wfolio.pro链接地址的下载功能，修改了超时检测次数（5--->9)
-
 *gallery-dl* is a command-line program
 to download image galleries and collections
 from several image hosting sites
