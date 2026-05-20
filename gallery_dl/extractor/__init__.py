@@ -76,6 +76,7 @@ modules = [
     "furaffinity",
     "furry34",
     "fuskator",
+    "galleryphoto",
     "gelbooru",
     "gelbooru_v01",
     "gelbooru_v02",
