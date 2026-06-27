@@ -1,5 +1,209 @@
 # Changelog
 
+## 1.32.4 - 2026-06-22
+### Extractors
+- **Additions**
+  - [pawchive] add support ([`cb#179`](https://codeberg.org/mikf/gallery-dl/issues/179) [`gh#9590`](https://github.com/mikf/gallery-dl/issues/9590))
+- **Removals**
+  - [cfake] remove module
+- **aryion**
+  - extract `title` without HTML entities ([`cb#183`](https://codeberg.org/mikf/gallery-dl/issues/183))
+  - fix metadata extraction ([`cb#193`](https://codeberg.org/mikf/gallery-dl/issues/193))
+- **bilibili**
+  - update `modules` extraction ([`gh#9596`](https://github.com/mikf/gallery-dl/issues/9596))
+- **civitai**
+  - fix file URLs
+- **comicartfans**
+  - bypass CF and fix 403 error for downloads
+- **facebook**
+  - fix crash on `title` values with double quotes ([`cb#198`](https://codeberg.org/mikf/gallery-dl/issues/198))
+- **fanbox**
+  - add `fee-min` option
+- **furaffinity**
+  - fix crash on `Image Not Found` posts ([`cb#195`](https://codeberg.org/mikf/gallery-dl/issues/195))
+- **hypnohub**
+  - use workaround for `Access Restricted` images ([`gh#9586`](https://github.com/mikf/gallery-dl/issues/9586))
+- **kemono**
+  - fix username & password login
+- **motherless**
+  - update domain to `motherless.xxx` ([`gh#9601`](https://github.com/mikf/gallery-dl/issues/9601))
+- **pixiv**
+  - restore `background` fallback URLs ([`gh#9587`](https://github.com/mikf/gallery-dl/issues/9587))
+- **shimmie2**
+  - generalize file URL extraction ([`cb#182`](https://codeberg.org/mikf/gallery-dl/issues/182))
+- **weibo**
+  - improve `retweet` extraction ([`cb#87`](https://codeberg.org/mikf/gallery-dl/issues/87) [`cb#191`](https://codeberg.org/mikf/gallery-dl/issues/191))
+- **xasiat**
+  - fix `filename` metadata ([`gh#9589`](https://github.com/mikf/gallery-dl/issues/9589))
+### Utilities
+- **util**
+  - implement and use `b64…` functions
+s
+## 1.32.3 - 2026-06-13
+### Extractors
+- **bluesky**
+  - support gallery/carousel media ([`cb#168`](https://codeberg.org/mikf/gallery-dl/issues/168))
+- **civitai**
+  - update file URLs ([`gh#9421`](https://github.com/mikf/gallery-dl/issues/9421))
+- **exhentai**
+  - do not send empty `f_search` parameters ([`cb#158`](https://codeberg.org/mikf/gallery-dl/issues/158))
+- **facebook**
+  - improve `next_photo_id` extraction
+- **gofile**
+  - fix `401 Unauthorized` ([`cb#133`](https://codeberg.org/mikf/gallery-dl/issues/133) [`cb#176`](https://codeberg.org/mikf/gallery-dl/issues/176))
+- **instagram**
+  - fix `num` of audio files & covers ([`cb#175`](https://codeberg.org/mikf/gallery-dl/issues/175))
+- **kemono**
+  - download preview files, implement `original` option ([`cb#97`](https://codeberg.org/mikf/gallery-dl/issues/97) [`gh#9442`](https://github.com/mikf/gallery-dl/issues/9442))
+- **leakgallery**
+  - update file URL regex ([`cb#119`](https://codeberg.org/mikf/gallery-dl/issues/119))
+- **newgrounds**
+  - use non-WebP extensions for `imageData` images ([`cb#162`](https://codeberg.org/mikf/gallery-dl/issues/162))
+- **oauth**
+  - fix `oauth:deviantart` & `oauth:pixiv` ([`cb#106`](https://codeberg.org/mikf/gallery-dl/issues/106))
+- **patreon**
+  - support post URLs with creator name ([`cb#170`](https://codeberg.org/mikf/gallery-dl/issues/170))
+  - update `User-Agent` version ([`pr#172`](https://codeberg.org/mikf/gallery-dl/pulls/172))
+- **pixhost**
+  - update domain to `pixhost.cc`
+- **twitter**
+  - fix `KeyError: 'name'` for `"transform": false` ([`cb#109`](https://codeberg.org/mikf/gallery-dl/issues/109))
+- **vsco**
+  - provide 'site_id' & 'user_id' metadata when possible [`cb#145`](https://codeberg.org/mikf/gallery-dl/issues/145)
+  - support downloadng user galleries by site ID [`gh#7310`](https://github.com/mikf/gallery-dl/issues/7310)
+### Utilities
+- **requirements**
+  - update package versions
+- **text**
+  - restore `bytes` value usage in `build_query()` ([`cb#106`](https://codeberg.org/mikf/gallery-dl/issues/106))
+
+## 1.32.2 - 2026-06-06
+### Extractors
+- **Additions**
+  - [shareimage] add `gallery` extractor ([`pr#143`](https://github.com/mikf/gallery-dl/pull/143))
+- **8chan**
+  - fix `IndexError: tuple index out of range` ([`cb#113`](https://codeberg.org/mikf/gallery-dl/issues/113))
+- **bunkr**
+  - fix file downloads ([`gh#142`](https://github.com/mikf/gallery-dl/issues/142) [`gh#154`](https://github.com/mikf/gallery-dl/issues/154) [`gh#9554`](https://github.com/mikf/gallery-dl/issues/9554))
+- **exhentai**
+  - always forward search query parameters ([`cb#79`](https://codeberg.org/mikf/gallery-dl/issues/79))
+  - fix torrent downloads for parent galleries ([`gh#9507`](https://github.com/mikf/gallery-dl/issues/9507))
+  - unescape HTML entities in API metadata titles
+- **filester**
+  - support mirror domains ([`gh#9501`](https://github.com/mikf/gallery-dl/issues/9501))
+  - add `domain` option ([`gh#9501`](https://github.com/mikf/gallery-dl/issues/9501))
+- **furaffinity**
+  - fix metadata for `Modern Theme` ([`cb#101`](https://codeberg.org/mikf/gallery-dl/issues/101) [`pr#110`](https://codeberg.org/mikf/gallery-dl/pulls/110))
+  - fix download URLs of non-image files ([`cb#115`](https://codeberg.org/mikf/gallery-dl/issues/115))
+- **gofile**
+  - fix `401 Unauthorized` ([`gh#133`](https://github.com/mikf/gallery-dl/issues/133))
+- **instagram**
+  - fix `AttributeError` when `display_url` is `None` ([`cb#104`](https://codeberg.org/mikf/gallery-dl/issues/104) [`pr#139`](https://github.com/mikf/gallery-dl/pull/139))
+- **mangadex**
+  - prevent `KeyError: 'attributes'`
+- **pixeldrain**
+  - support URLs with `.net` TLD ([`cb#105`](https://codeberg.org/mikf/gallery-dl/issues/105))
+- **postype**
+  - support URLs with language codes
+- **realbooru**
+  - improve pagination end condition ([`gh#147`](https://github.com/mikf/gallery-dl/issues/147))
+- **sankaku**
+  - fix extended tag categories ([`gh#149`](https://github.com/mikf/gallery-dl/issues/149))
+- **shimmie2**
+  - improve pagination end condition ([`gh#9525`](https://github.com/mikf/gallery-dl/issues/9525))
+- **subscribestar**
+  - support `subscribestar.art` URLs ([`cb#77`](https://codeberg.org/mikf/gallery-dl/issues/77))
+- **toyhouse**
+  - fix & improve metadata extraction
+- **tumblr**
+  - support blog ID URLs
+- **twitter**
+  - try to improve `max_id` handling & prevent repeated `previously seen` messages ([`gh#9410`](https://github.com/mikf/gallery-dl/issues/9410) [`gh#9437`](https://github.com/mikf/gallery-dl/issues/9437))
+  - support `poll_choice_images` cards ([`gh#9511`](https://github.com/mikf/gallery-dl/issues/9511))
+  - prevent errors for `external` cards
+- **vipergirls**
+  - fix `domain` not applying to cookies ([`gh#9500`](https://github.com/mikf/gallery-dl/issues/9500))
+  - improve error for restricted threads ([`gh#9500`](https://github.com/mikf/gallery-dl/issues/9500))
+  - use a different domain than `viper.click` for login ([`gh#9500`](https://github.com/mikf/gallery-dl/issues/9500))
+- **xfolio**
+  - fix `_logged_in` and `header` errors ([`pr#83`](https://codeberg.org/mikf/gallery-dl/pulls/83))
+### Scripts
+- implement `fmt.py`
+
+## 1.32.1 - 2026-05-03
+### Extractors
+- Additions
+  - [aryion] add extractor for watched users ([`cb#71`](https://codeberg.org/mikf/gallery-dl/issues/71))
+  - [framedsc] add support ([`pr#58`](https://codeberg.org/mikf/gallery-dl/pulls/58) [`gh#9192`](https://github.com/mikf/gallery-dl/issues/9192))
+- Removals
+  - [weebdex] remove module
+  - [comick] remove module
+- `aryion`
+  - rename `watch` extractor to `messagepage`
+- `blogger`
+  - fix video extraction ([`gh#9487`](https://github.com/mikf/gallery-dl/issues/9487))
+- `deviantart`
+  - improve CAPTCHA detection during login ([`gh#9351`](https://github.com/mikf/gallery-dl/issues/9351) [`cb#9`](https://codeberg.org/mikf/gallery-dl/issues/9))
+- `discord`
+  - cache server API results ([`cb#57`](https://codeberg.org/mikf/gallery-dl/issues/57))
+  - process server channels as children ([`cb#57`](https://codeberg.org/mikf/gallery-dl/issues/57))
+- `exhentai`
+  - implement `"source": "torrent"` ([`gh#2996`](https://github.com/mikf/gallery-dl/issues/2996) [`gh#9470`](https://github.com/mikf/gallery-dl/issues/9470))
+- `facebook`
+  - handle negative `fallback-retries` values
+  - increase `loop` detection threshold ([`gh#9495`](https://github.com/mikf/gallery-dl/issues/9495))
+- `furaffinity`
+  - fix download URL extraction ([`gh#9494`](https://github.com/mikf/gallery-dl/issues/9494))
+- `imxto`
+  - extract `date` metadata ([`gh#9450`](https://github.com/mikf/gallery-dl/issues/9450))
+- `instagram`
+  - add `pinned` option ([`gh#9492`](https://github.com/mikf/gallery-dl/issues/9492))
+  - restore `"posts are private"` warning ([`gh#9291`](https://github.com/mikf/gallery-dl/issues/9291))
+  - support audio from `clips_metadata` ([`gh#9477`](https://github.com/mikf/gallery-dl/issues/9477))
+  - support downloading audio from `dash_manifest` data
+  - unset `wd` cookie ([`gh#8300`](https://github.com/mikf/gallery-dl/issues/8300) [`cb#73`](https://codeberg.org/mikf/gallery-dl/issues/73))
+- `nitter`
+  - add `fallback-retries` option ([`cb#59`](https://codeberg.org/mikf/gallery-dl/issues/59))
+  - use `request_location()` for user ID lookups
+- `philomena`
+  - add `comments` option ([`gh#9478`](https://github.com/mikf/gallery-dl/issues/9478))
+- `pixiv`
+  - fix & update `search` extractor ([`gh#9469`](https://github.com/mikf/gallery-dl/issues/9469))
+- `reddit`
+  - add `pinned` option ([`gh#9004`](https://github.com/mikf/gallery-dl/issues/9004))
+- `scrolller`
+  - fix `user` GraphQL query
+- `telegraph`
+  - extract full article `html` & `links` metadata ([`gh#9468`](https://github.com/mikf/gallery-dl/issues/9468))
+- `twibooru`
+  - add `comments` option ([`gh#9478`](https://github.com/mikf/gallery-dl/issues/9478))
+- `twitter`
+  - fix `AttributeError` when extended user metadata fetch fails ([`pr#76`](https://codeberg.org/mikf/gallery-dl/pulls/76))
+- `vipergirls`
+  - support proxy domains ([`cb#43`](https://codeberg.org/mikf/gallery-dl/issues/43))
+- `warosu`
+  - fix extraction ([`gh#9485`](https://github.com/mikf/gallery-dl/issues/9485))
+- `weibo`
+  - fix `KeyError: 'title'` ([`cb#47`](https://codeberg.org/mikf/gallery-dl/issues/47))
+### Documentation
+- replace more GitHub links
+### Output
+- add `units` option ([`cb#56`](https://codeberg.org/mikf/gallery-dl/issues/56))
+### Scripts
+- `release`
+  - include `requirements` directory
+- `rm`
+  - delete `extractor/utils` files
+### Update
+- pull from Codeberg for versions >= 1.32.0 ([`gh#9473`](https://github.com/mikf/gallery-dl/issues/9473) [`gh#9496`](https://github.com/mikf/gallery-dl/issues/9496))
+### Utilities
+- `job`
+  - run `filter` before `date` & `tags` predicates ([`gh#9492`](https://github.com/mikf/gallery-dl/issues/9492))
+- `text`
+  - implement `iextr()`
+- `util`
+  - implement `format_bytes_binaryi()`
+
 ## 1.32.0 - 2026-04-24
 ### Core
 - implement basic server/IPC queue ([`pr#9338`](https://github.com/mikf/gallery-dl/pull/9338))
