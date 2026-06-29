@@ -309,10 +309,15 @@ class HttpDownloader(DownloaderBase):
             # check filename extension against file header
             if not offset and (validate_ext or validate_sig):
                 try:
-                    file_header = next(
-                        content if response.raw.chunked
-                        else response.iter_content(16), b"")
-                except (RequestException, SSLError) as exc:
+                    try:
+                        file_header = next(
+                            content if response.raw.chunked
+                            else response.iter_content(16), b"")
+                    except AttributeError:
+                        # curl_cffi response has no .raw attribute
+                        file_header = next(
+                            response.iter_content(16), b"")
+                except (RequestException, SSLError, OSError) as exc:
                     msg = str(exc)
                     continue
                 if validate_sig:
@@ -356,7 +361,7 @@ class HttpDownloader(DownloaderBase):
                 self.out.start(pathfmt.path)
                 try:
                     self.receive(fp, content, size, offset)
-                except (RequestException, SSLError) as exc:
+                except (RequestException, SSLError, OSError) as exc:
                     msg = str(exc)
                     output.stderr_write("\n")
                     continue
@@ -398,7 +403,7 @@ class HttpDownloader(DownloaderBase):
         try:
             for _ in response.iter_content(self.chunk_size):
                 pass
-        except (RequestException, SSLError) as exc:
+        except (RequestException, SSLError, OSError) as exc:
             output.stderr_write("\n")
             self.log.debug(
                 "Unable to consume response body (%s: %s); "

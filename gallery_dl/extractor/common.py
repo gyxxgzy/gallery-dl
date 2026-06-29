@@ -48,6 +48,7 @@ class Extractor():
     ciphers = None
     tls12 = True
     browser = None
+    tls_impersonate = None
     useragent = util.USERAGENT_FIREFOX
     geobypass = None
     request_interval = 0.0
@@ -510,7 +511,26 @@ class Extractor():
                 self.request_interval_429)
 
     def _init_session(self):
-        self.session = session = requests.Session()
+        # Check for TLS impersonation (curl_cffi)
+        tls_impersonate = self.config("tls-impersonate")
+        if tls_impersonate is None:
+            tls_impersonate = self.tls_impersonate
+
+        if tls_impersonate:
+            try:
+                import curl_cffi.requests  # noqa: F811
+            except ImportError:
+                self.log.error(
+                    "'curl_cffi' is required for TLS impersonation. "
+                    "Install it with: pip install curl_cffi")
+                tls_impersonate = None
+
+        if tls_impersonate:
+            self.session = session = CurlCffiSession(
+                tls_impersonate, curl_cffi.requests)
+        else:
+            self.session = session = requests.Session()
+
         headers = session.headers
         headers.clear()
         ssl_options = ssl_ciphers = 0
@@ -648,10 +668,11 @@ class Extractor():
         else:
             ssl_ctx = None
 
-        adapter = _build_requests_adapter(
-            ssl_options, ssl_ciphers, ssl_ctx, source_address)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
+        if not tls_impersonate:
+            adapter = _build_requests_adapter(
+                ssl_options, ssl_ciphers, ssl_ctx, source_address)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
 
     def _init_cookies(self):
         """Populate the session's cookiejar"""
@@ -1123,6 +1144,154 @@ class BaseExtractor(Extractor):
 
         return (f"(?:{cls.basecategory}:(https?://[^/?#]+)|"
                 f"(?:https?://)?(?:{'|'.join(pattern_list)}))")
+
+
+class CurlCffiCookiesWrapper:
+    """Wraps curl_cffi Cookies to mimic requests.cookies.RequestsCookieJar.
+
+    curl_cffi.requests.cookies.Cookies differs from RequestsCookieJar in:
+    - __iter__ returns cookie names (strings), not Cookie objects
+    - No set_cookie() method
+    - Has jar attribute (standard http.cookiejar.CookieJar) as bridge
+    """
+
+    def __init__(self, curl_cffi_cookies):
+        self._cookies = curl_cffi_cookies
+        self.jar = curl_cffi_cookies.jar
+
+    def __iter__(self):
+        return iter(self.jar)
+
+    def __bool__(self):
+        return bool(list(self.jar))
+
+    def __len__(self):
+        return len(list(self.jar))
+
+    def set_cookie(self, cookie):
+        self.jar.set_cookie(cookie)
+
+    def set(self, name, value, domain=""):
+        self._cookies.set(name, value, domain=domain)
+
+    def clear(self, domain=None, path=None, name=None):
+        self._cookies.clear(domain=domain, path=path, name=name)
+
+    def get_dict(self, domain=None, path=None):
+        return self._cookies.get_dict(domain=domain, path=path)
+
+    def update(self, other):
+        for cookie in other:
+            self.set_cookie(cookie)
+
+    def __getitem__(self, name):
+        for cookie in self.jar:
+            if cookie.name == name:
+                return cookie.value
+        raise KeyError(name)
+
+    def __contains__(self, name):
+        return any(cookie.name == name for cookie in self.jar)
+
+
+class CurlCffiSession:
+    """Wraps curl_cffi.requests.Session to be compatible with requests.Session.
+
+    Translates curl_cffi exceptions to requests.exceptions equivalents,
+    provides mount() no-op, and wraps cookies for compatibility.
+    """
+
+    def __init__(self, impersonate, curl_requests):
+        self._inner = curl_requests.Session(impersonate=impersonate)
+        self.__cookies = CurlCffiCookiesWrapper(self._inner.cookies)
+
+    # -- request() with exception translation --
+
+    def request(self, method, url, **kwargs):
+        try:
+            return self._inner.request(method, url, **kwargs)
+        except self._curl_request_exception as exc:
+            self._translate_curl_error(exc)
+
+    @property
+    def _curl_request_exception(self):
+        try:
+            from curl_cffi.requests.errors import RequestException
+            return RequestException
+        except ImportError:
+            return OSError
+
+    @staticmethod
+    def _translate_curl_error(exc):
+        code = getattr(exc, "code", None)
+        msg = str(exc)
+        if code == 28:
+            raise requests.exceptions.Timeout(msg) from exc
+        elif code in (7, 56):
+            raise requests.exceptions.ConnectionError(msg) from exc
+        elif code in (35, 60):
+            raise requests.exceptions.SSLError(msg) from exc
+        else:
+            raise requests.exceptions.RequestException(msg) from exc
+
+    # -- delegated methods (pass-through) --
+
+    def get(self, url, **kwargs):
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url, **kwargs):
+        return self.request("POST", url, **kwargs)
+
+    def head(self, url, **kwargs):
+        return self.request("HEAD", url, **kwargs)
+
+    def close(self):
+        self._inner.close()
+
+    def mount(self, prefix, adapter=None):
+        pass  # curl_cffi handles TLS internally
+
+    # -- delegated properties --
+
+    @property
+    def headers(self):
+        return self._inner.headers
+
+    @headers.setter
+    def headers(self, value):
+        self._inner.headers = value
+
+    @property
+    def cookies(self):
+        return self.__cookies
+
+    @cookies.setter
+    def cookies(self, value):
+        self.__cookies = value
+
+    @property
+    def proxies(self):
+        return self._inner.proxies
+
+    @proxies.setter
+    def proxies(self, value):
+        self._inner.proxies = value
+
+    @property
+    def verify(self):
+        return self._inner.verify
+
+    @verify.setter
+    def verify(self, value):
+        self._inner.verify = value
+
+    @property
+    def trust_env(self):
+        return self._inner.trust_env
+
+    @trust_env.setter
+    def trust_env(self, value):
+        self._inner.trust_env = value
 
 
 class RequestsAdapter(HTTPAdapter):

@@ -501,6 +501,11 @@ def build_parser():
         help="Timeout for HTTP connections (default: 30.0)",
     )
     networking.add_argument(
+        "--tls-impersonate",
+        dest="tls-impersonate", metavar="BROWSER", action=ConfigAction,
+        help="TLS fingerprint impersonation (e.g. chrome131, firefox133)",
+    )
+    networking.add_argument(
         "--proxy",
         dest="proxy", metavar="URL", action=ConfigAction,
         help="Use the specified proxy",
