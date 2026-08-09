@@ -7,4 +7,4 @@
 # published by the Free Software Foundation.
 
 __version__ = "1.32.9"
-__variant__ = None
+__variant__ = "tls-impersonate"
