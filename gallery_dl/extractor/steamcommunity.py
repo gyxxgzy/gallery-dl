@@ -60,6 +60,8 @@ class SteamcommunityExtractor(Extractor):
                 break
 
     def _extract_game(self, appid):
+        if appid == "767":
+            return "Steam Artwork"
         url = f"{self.root}/app/{appid}/"
         page = self.request(url).text
         name = text.extr(page, 'class="apphub_AppName', '<')
@@ -75,10 +77,13 @@ class SteamcommunitySharedfileExtractor(SteamcommunityExtractor):
     def items(self):
         fid = self.groups[0]
         url = f"{self.root}/sharedfiles/filedetails/?id={fid}"
-        page = self.request(url).text
+        cookies = {"wants_mature_content_item_" + fid: "1"}
+        page = self.request(url, cookies=cookies).text
 
         section = text.extr(
             page, 'class="apphub_sectionTab active "><span>', '<').lower()
+        if not section and ">Steam Artwork<" in page:
+            section = "artwork"
         if section not in SECTION_IDS:
             raise self.exc.AbortExtraction(f"Unsupported section '{section}'")
 
