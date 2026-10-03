@@ -83,7 +83,7 @@ __tests__ = (
 {
     "#url"     : "https://steamcommunity.com/app/221910/screenshots/",
     "#class"   : steamcommunity.SteamcommunityGameExtractor,
-    "#pattern" : r"https://images\.steamusercontent\.com/ugc/.+",
+    "#pattern" : r"https://images\.steamusercontent\.com/ugc/\d+/\w+/$",
     "#range"   : "1-25",
     "#count"   : 25,
 
@@ -92,10 +92,11 @@ __tests__ = (
     "creator_id": str,
     "extension" : "jpg",
     "file_id"   : str,
+    "game"      : "The Stanley Parable",
     "game_appid": "221910",
     "post_url"  : str,
     "section"   : "Screenshot",
-    "title"     : str,
+    "description": str,
     "ugc_id"    : str,
 },
 

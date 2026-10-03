@@ -12,8 +12,8 @@ from .. import text, dt
 BASE_PATTERN = r"(?:https?://)?(?:www\.)?steamcommunity.com"
 SECTIONS = {
     "screenshots": 2,
-    "artwork"    : 3,
-    "images"     : 3,
+    "artwork"    : 4,
+    "images"     : 4,
 }
 
 
@@ -21,8 +21,8 @@ class SteamcommunityExtractor(Extractor):
     """Base class for steamcommunity extractors"""
     category = "steamcommunity"
     root = "https://steamcommunity.com"
-    directory_fmt = ("{category}", "{game_appid}", "{section!c}")
-    filename_fmt = "{file_id}{title:? //}.{extension}"
+    directory_fmt = ("{category}", "{game}", "{section!c}")
+    filename_fmt = "{file_id}{title:? //}{description:? //X180/…/}.{extension}"
     archive_fmt = "{game_appid}_{file_id}_{ugc_id}"
     request_interval = (0.5, 1.5)
 
@@ -134,26 +134,33 @@ class SteamcommunityGameExtractor(SteamcommunityExtractor):
     def _extract_card(self, card):
         extr = text.extract_from(card)
         data = {
-            "post_url": extr('data-modal-content-url="', '"'),
-            "game_appid": extr('data-appid="', '"'),
-            "file_id": extr('data-publishedfileid="', '"'),
-            "section": extr('class="apphub_CardContentType">', '<'),
-            "url": extr('src="', '"'),
-            "comments": extr('class="apphub_CardCommentCount">', '<'),
-            "title": text.unescape(extr(
+            "post_url"   : extr('data-modal-content-url="', '"'),
+            "game_appid" : extr('data-appid="', '"'),
+            "file_id"    : extr('data-publishedfileid="', '"'),
+            "section"    : extr('class="apphub_CardContentType">', '<'),
+            "url"        : extr('src="', '"'),
+            "comments"   : extr('class="apphub_CardCommentCount">', '<'),
+            "description": text.unescape(extr(
                 'class="apphub_CardContentTitle ellipsis">', '<')).strip(),
-            "creator_id": extr('data-miniprofile="', '"'),
-            "extension" : "jpg",
+            "creator_id" : extr('data-miniprofile="', '"'),
+            "extension"  : "jpg",
         }
 
         creator = extr('class="apphub_CardContentAuthorName', "</")
         data["creator"] = text.unescape(creator[creator.rfind(">")+1:])
-
+        data["game"] = self.cache(
+            self._extract_game, data["game_appid"], _mem=False)
         return data
 
+    def _extract_game(self, appid):
+        url = f"{self.root}/app/{appid}/"
+        page = self.request(url).text
+        name = text.extr(page, 'class="apphub_AppName', '<')
+        return text.unescape(name[name.rfind(">")+1:])
+
     def _pagination(self, per_page=10):
-        app_id, type, qs = self.groups
-        url = f"{self.root}/app/{app_id}/homecontent/"
+        appid, type, qs = self.groups
+        url = f"{self.root}/app/{appid}/homecontent/"
         params = text.parse_query(qs)
         pnum = text.parse_int(params.get("p"), 1)
 
@@ -173,7 +180,7 @@ class SteamcommunityGameExtractor(SteamcommunityExtractor):
             "discussionspage"    : None,
             "numperpage"         : str(per_page),
             "browsefilter"       : "trend",
-            "appid"              : app_id,
+            "appid"              : appid,
             "appHubSubSection"   : str(SECTIONS[type]),
             "l"                  : "english",
             "filterLanguage"     : "default",
