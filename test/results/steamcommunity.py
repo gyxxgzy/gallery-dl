@@ -109,4 +109,24 @@ __tests__ = (
     "#count"   : 25,
 },
 
+{
+    "#url"     : "https://steamcommunity.com/id/ivasen/screenshots/",
+    "#class"   : steamcommunity.SteamcommunityUserExtractor,
+    "#pattern" : r"https://images\.steamusercontent\.com/ugc/\d+/\w+/$",
+    "#range"   : "1-25",
+    "#count"   : 25,
+
+    "creator"    : "IvaSen",
+    "creator_id" : "ivasen",
+    "creator_sid": "76561198144232245",
+    "description": str,
+    "extension"  : "jpg",
+    "file_id"    : str,
+    "game"       : str,
+    "game_appid" : str,
+    "post_url"   : str,
+    "section"    : "screenshots",
+    "ugc_id"     : str,
+},
+
 )

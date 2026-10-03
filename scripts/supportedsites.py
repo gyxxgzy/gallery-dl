@@ -501,6 +501,7 @@ SUBCATEGORY_MAP = {
     },
     "steamcommunity": {
         "game": "Game Media",
+        "user": "User Media",
     },
     "steamgriddb": {
         "asset": "Individual Assets",
