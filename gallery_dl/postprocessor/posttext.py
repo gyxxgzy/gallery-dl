@@ -15,15 +15,16 @@ import re
 class PosttextPP(PostProcessor):
     """Write the text content of a post to a '.md' file
 
-    The file is created once the whole post has been downloaded and is
-    named after the directory that post was downloaded into, so that
-    every post ends up in its own folder with a matching text file.
+    The file is named after the directory its post was downloaded into,
+    so that every post ends up in its own folder with a matching text
+    file.
     """
 
     def __init__(self, job, options):
         PostProcessor.__init__(self, job)
 
         self._formatters = {}
+        self._written = set()
 
         directory = options.get("directory")
         if isinstance(directory, str):
@@ -50,9 +51,10 @@ class PosttextPP(PostProcessor):
         filename = options.get("filename")
         self.filename = filename if filename else None
 
-        events = options.get("event", "finalize")
+        events = options.get("event", self.EVENTS_DEFAULT)
         if isinstance(events, str):
             events = events.split(",")
+        events = [event.strip() for event in events if event.strip()]
         job.register_hooks({event: self.run for event in events}, options)
 
     def run(self, pathfmt):
@@ -61,25 +63,37 @@ class PosttextPP(PostProcessor):
         if not content and not self.empty:
             return
         path = self._path(pathfmt, kwdict, content)
+        # 'post' and 'finalize' can both fire for the same directory
+        if path in self._written:
+            return
+        if self._write(path, content):
+            self._written.add(path)
+
+    def _write(self, path, content, retry=True):
         try:
-            self._write(path, content)
+            with open(path, "w", encoding=self.encoding,
+                      newline=self.newline) as fp:
+                fp.write(content)
         except FileNotFoundError:
+            if not retry:
+                return False
+            # postprocessors like 'post' run before any file is written,
+            # so the target directory might not exist yet
+            directory = os.path.dirname(path)
             try:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                self._write(path, content)
+                os.makedirs(directory, exist_ok=True)
             except OSError as exc:
-                self.log.warning("Unable to write '%s' (%s: %s)",
-                                 path, exc.__class__.__name__, exc)
+                self.log.warning("Unable to create '%s' (%s: %s)",
+                                 directory, exc.__class__.__name__, exc)
+                return False
+            return self._write(path, content, False)
         except OSError as exc:
             self.log.warning("Unable to write '%s' (%s: %s)",
                              path, exc.__class__.__name__, exc)
         else:
             self.log.debug("Wrote '%s'", path)
-
-    def _write(self, path, content):
-        with open(path, "w", encoding=self.encoding,
-                  newline=self.newline) as fp:
-            fp.write(content)
+            return True
+        return False
 
     def _path(self, pathfmt, kwdict, content):
         # directory + name of the downloaded files' folder
@@ -157,6 +171,10 @@ class PosttextPP(PostProcessor):
             value = util.to_string(value)
         return value.strip()
 
+    # 'post' fires once for every directory, 'finalize' once per job.
+    # Extractors like 'patreon' queue hundreds of posts inside a single
+    # job, so 'finalize' alone would only ever write the last one.
+    EVENTS_DEFAULT = ("post", "finalize")
     FIELDS_DEFAULT = ("content",)
     HTML_DEFAULT = frozenset(("content",))
 

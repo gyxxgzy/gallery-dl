@@ -1213,6 +1213,42 @@ class PosttextTest(BasePostprocessorTest):
 
         self.assertEqual(self._read(self._name() + ".md"), "# Hello\n")
 
+    def test_multiple_directories(self):
+        # 'post' fires once for every directory, 'finalize' only once for
+        # the whole job. Extractors like 'patreon' queue hundreds of posts
+        # inside a single job, so relying on 'finalize' alone would only
+        # ever write the last one.
+        self._create({"directory": ["{category}", "{title}"]}, {
+            "title": "one",
+            "content": "<p>one</p>",
+        })
+        self._trigger(("post",))
+
+        kwdict = {
+            "category": "test",
+            "filename": "file",
+            "extension": "ext",
+            "title": "two",
+            "content": "<p>two</p>",
+        }
+        self.pathfmt.set_directory(kwdict)
+        self.pathfmt.set_filename(kwdict)
+        self._trigger(("post",))
+
+        for name in ("one", "two"):
+            path = os.path.join(self.dir.name, "test", name, name + ".md")
+            with open(path, encoding="utf-8") as fp:
+                self.assertEqual(fp.read(), f"# {name}\n\n{name}\n")
+
+    def test_post_and_finalize(self):
+        # both events fire for the same directory -> write only once
+        self._create(None, {"title": "Hello", "content": "<p>body</p>"})
+        self._trigger(("post",))
+        self.pathfmt.kwdict["content"] = "<p>changed</p>"
+        self._trigger(("finalize",))
+
+        self.assertEqual(self._read(self._name() + ".md"), "# Hello\n\nbody\n")
+
 
 class PythonTest(BasePostprocessorTest):
 
