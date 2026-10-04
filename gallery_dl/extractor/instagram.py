@@ -816,24 +816,17 @@ class InstagramAvatarExtractor(InstagramExtractor):
     example = "https://www.instagram.com/USER/avatar/"
 
     def posts(self):
-        if self._logged_in:
-            user_id = self.api.user(self.item, check_private=False)["id"]
-            user = self.api.user_by_id(user_id)
-            avatar = (user.get("hd_profile_pic_url_info") or
-                      user["hd_profile_pic_versions"][-1])
-        else:
-            user = self.item
-            if user.startswith("id:"):
-                user = self.api.user_by_id(user[3:])
-            else:
-                user = self.api.user_by_screen_name(user)
-                user["pk"] = user["id"]
-            url = user.get("profile_pic_url_hd") or user["profile_pic_url"]
-            avatar = {"url": url, "width": 0, "height": 0}
+        user = self.api.user(self.item, check_private=False)
+        avatar = (user.get("hd_profile_pic_url_info") or
+                  user["hd_profile_pic_versions"][-1])
+        avatar.setdefault("width", 0)
+        avatar.setdefault("height", 0)
 
         if pk := user.get("profile_pic_id"):
             pk = pk.partition("_")[0]
             code = shortcode_from_id(pk)
+        elif pk := text.rextr(avatar["url"], "/", "_n."):
+            code = pk
         else:
             pk = code = "avatar:" + str(user["pk"])
 
@@ -1065,9 +1058,11 @@ class InstagramAPI():
 
     def user(self, screen_name, check_private=True):
         if screen_name.startswith("id:"):
-            user = self.user_by_id(screen_name[3:])
+            user_id = screen_name[3:]
         else:
-            user = self.user_by_screen_name(screen_name)
+            user = self.user_by_web(screen_name)
+            user_id = self.extractor._assign_user(user)["id"]
+        user = self.user_by_id(user_id)
 
         if check_private and user.get("is_private") and (
                 not user.get("followed_by_viewer", True) or
