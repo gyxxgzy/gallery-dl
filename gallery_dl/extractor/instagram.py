@@ -538,6 +538,8 @@ class InstagramExtractor(Extractor):
             except Exception:
                 user[key] = 0
 
+        return user
+
 
 class InstagramPostExtractor(InstagramExtractor):
     """Extractor for an Instagram post"""
@@ -956,10 +958,36 @@ class InstagramAPI():
             _exp=self._user_cache_exp, _mem=self._user_cache_mem)
 
     def _user_by_id_impl(self, user_id):
+        opname = "PolarisProfilePageContentQuery"
+        variables = {
+            "enable_integrity_filters": True,
+            "id"                      : user_id,
+            "__relay_internal__pv__"
+            "PolarisCannesGuardianExperienceEnabledrelayprovider": True,
+            "__relay_internal__pv__"
+            "PolarisCASB976ProfileEnabledrelayprovider": False,
+            "__relay_internal__pv__"
+            "PolarisWebSchoolsEnabledrelayprovider": False,
+            "__relay_internal__pv__"
+            "PolarisRepostsConsumptionEnabledrelayprovider": True,
+            "__relay_internal__pv__"
+            "PolarisShortDramaEnabledrelayprovider": True,
+        }
+
+        try:
+            return self._call_graphql(
+                opname, variables, "28036671149327607",
+                notfound="user")["user"]
+        except self.exc.ControlException:
+            raise
+        except Exception:
+            raise self.exc.NotFoundError("user")
+
+    def _user_by_id_impl_legacy(self, user_id):
         endpoint = f"/v1/users/{user_id}/info/"
         try:
             return self._call(endpoint, notfound="user")["user"]
-        except self.extractor.exc.ControlException:
+        except self.exc.ControlException:
             raise
         except Exception:
             raise self.exc.NotFoundError("user")
@@ -975,7 +1003,7 @@ class InstagramAPI():
         try:
             return self._call(
                 endpoint, params=params, notfound="user")["data"]["user"]
-        except self.extractor.exc.ControlException:
+        except self.exc.ControlException:
             raise
         except Exception:
             raise self.exc.NotFoundError("user")
@@ -995,7 +1023,7 @@ class InstagramAPI():
                 user = result["user"]
                 if user["username"].lower() == name:
                     return user
-        except self.extractor.exc.ControlException:
+        except self.exc.ControlException:
             raise
         except Exception:
             pass
@@ -1007,22 +1035,8 @@ class InstagramAPI():
             _exp=self._user_cache_exp, _mem=self._user_cache_mem)
 
     def _user_by_web_impl(self, username):
-        url = "https://www.instagram.com/" + username
-
         try:
-            headers = {
-                "Accept": "text/html,application/xhtml+xml,"
-                          "application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate, br, zstd",
-                "Alt-Used": "www.instagram.com",
-                "Connection": "keep-alive",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Priority": "u=0, i",
-            }
-            page = self.extractor.request(url, headers=headers).text
+            page = self.extractor.cache(self._webpage, "/" + username)
             user = {}
             if user_id := text.extr(page, '"profile_id":"', '"'):
                 user["id"] = user_id
@@ -1051,10 +1065,10 @@ class InstagramAPI():
 
     def user(self, screen_name, check_private=True):
         if screen_name.startswith("id:"):
-            self.extractor._user = user = self.user_by_id(screen_name[3:])
-            return user
+            user = self.user_by_id(screen_name[3:])
+        else:
+            user = self.user_by_screen_name(screen_name)
 
-        user = self.user_by_screen_name(screen_name)
         if check_private and user.get("is_private") and (
                 not user.get("followed_by_viewer", True) or
                 not user.get("friendship_status", {}).get("following", True)):
@@ -1062,8 +1076,7 @@ class InstagramAPI():
             s = "" if name.endswith("s") else "s"
             self.extractor.log.warning("%s'%s posts are private", name, s)
 
-        self.extractor._assign_user(user)
-        return user
+        return self.extractor._assign_user(user)
 
     def user_collection(self, collection_id):
         endpoint = f"/v1/feed/collection/{collection_id}/posts/"
@@ -1215,8 +1228,18 @@ class InstagramAPI():
         return doc_id
 
     def _webpage(self, path):
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                      "image/avif,image/webp,image/apng,*/*;q=0.8,"
+                      "application/signed-exchange;v=b3;q=0.7",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-User": "?1",
+            "Sec-Fetch-Dest": "document",
+        }
         extr = self.extractor
-        return extr.request(f"{extr.root}{path}/", interval=False).text
+        return extr.request(f"{extr.root}{path}/", headers=headers,
+                            interval=False).text
 
     def _call(self, endpoint, **kwargs):
         extr = self.extractor
@@ -1235,6 +1258,51 @@ class InstagramAPI():
             "X-Requested-With": "XMLHttpRequest",
         }
         return extr.request_json(url, **kwargs)
+
+    def _call_graphql(self, opname, variables, doc_id, **kwargs):
+        extr = self.extractor
+        path = ("/" + extr._user["username"]) if extr._user else ""
+        url = extr.root + "/api/graphql"
+
+        fb_lsd, fb_dtsg = self._extract_fb_tokens(path)
+        doc_id = extr.cache(self._extract_docid, path, opname,
+                            _key=1, _exp=86400, _mem=False) or doc_id
+
+        kwargs["method"] = "POST"
+        kwargs["headers"] = {
+            "Accept"            : "*/*",
+            "Content-Type"      : "application/x-www-form-urlencoded",
+            "X-FB-Friendly-Name": opname,
+            "X-CSRFToken"       : extr.csrf_token,
+            "X-IG-App-ID"       : "936619743392459",
+            "X-IG-Max-Touch-Points": "0",
+            "X-FB-LSD"          : fb_lsd,
+            "X-ASBD-ID"         : "359341",
+            "Referer"           : extr.root + path,
+        }
+        kwargs["data"] = {
+            "av"    : "17841415137994167",
+            "__d"   : "www",
+            "__user": "0",
+            "__a"   : "1",
+            "__req" : "0",
+            "__hs"  : "20730.HYP%3Ainstagram_web_pkg.2.1...0",
+            "dpr"   : "1",
+            "__ccg" : "EXCELLENT",
+            "__rev" : "1049238852",
+            "__hsi" : "7692718682705400934",
+            "__comet_req": "7",
+            "fb_dtsg"  : fb_dtsg,
+            "jazoest"  : "26461",
+            "lsd"      : fb_lsd,
+            "fb_api_caller_class": "RelayModern",
+            "fb_api_req_friendly_name": opname,
+            "server_timestamps": "true",
+            "variables": util.json_dumps(variables),
+            "doc_id"   : doc_id,
+        }
+
+        return extr.request_json(url, **kwargs)["data"]
 
     def _pagination(self, endpoint, params=None, media=False):
         if params is None:
