@@ -168,6 +168,13 @@ class UpdateExtractor(Extractor):
         variant = version.__variant__ or "stable/windows"
         repo, _, binary = variant.partition("/")
 
+        # 'variant' doubles as the label shown by '--version' and as the
+        # update channel; custom builds may use a label that is not a
+        # channel, so fall back to the "stable/windows" default for those
+        if repo not in REPOS or binary not in BINARIES[repo]:
+            repo = "stable"
+            binary = "windows"
+
         target = self.groups[0]
         if target == "latest":
             pass
