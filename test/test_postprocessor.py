@@ -1151,6 +1151,69 @@ class MtimeTest(BasePostprocessorTest):
         self.assertEqual(args[1][1], 315532800)
 
 
+class PosttextTest(BasePostprocessorTest):
+
+    def _read(self, *parts):
+        path = os.path.join(self.pathfmt.realdirectory, *parts)
+        with open(path, encoding="utf-8") as fp:
+            return fp.read()
+
+    def _name(self):
+        return os.path.basename(self.pathfmt.realdirectory.rstrip(os.sep))
+
+    def test_default(self):
+        self._create(None, {
+            "title": "Hello & World",
+            "content": "<p>one</p><p>two &amp; three</p>",
+        })
+        self._trigger(("finalize",))
+
+        self.assertEqual(
+            self._read(self._name() + ".md"),
+            "# Hello & World\n\none\n\ntwo & three\n",
+        )
+
+    def test_options(self):
+        name = "$10 Cold Nakedness_ The Confidence"
+        self._create({
+            "directory": ["{category}", "{title:R[//R]//}"],
+            "title": "{title:R[//R]//}",
+        }, {
+            "title": "[$10] Cold Nakedness: The Confidence",
+            "content": "<p>body</p>",
+        })
+        self._trigger(("finalize",))
+
+        path = os.path.join(self.dir.name, "test", name, name + ".md")
+        with open(path, encoding="utf-8") as fp:
+            self.assertEqual(
+                fp.read(),
+                "# $10 Cold Nakedness: The Confidence\n\nbody\n",
+            )
+
+    def test_filename(self):
+        self._create({"filename": "text"}, {
+            "title": "Hello",
+            "content": "<p>body</p>",
+        })
+        self._trigger(("finalize",))
+
+        self.assertEqual(self._read("text.md"), "# Hello\n\nbody\n")
+
+    def test_empty(self):
+        self._create({"filename": "empty"}, {"title": "", "content": ""})
+        self._trigger(("finalize",))
+
+        self.assertFalse(
+            os.path.exists(os.path.join(self.pathfmt.realdirectory, "empty.md")))
+
+    def test_empty_option(self):
+        self._create({"empty": True}, {"title": "Hello", "content": ""})
+        self._trigger(("finalize",))
+
+        self.assertEqual(self._read(self._name() + ".md"), "# Hello\n")
+
+
 class PythonTest(BasePostprocessorTest):
 
     def test_module(self):

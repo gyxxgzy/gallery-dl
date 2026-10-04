@@ -21,7 +21,8 @@ class PatreonExtractor(Extractor):
     category = "patreon"
     root = "https://www.patreon.com"
     cookies_domain = ".patreon.com"
-    directory_fmt = ("{category}", "{creator[full_name]}")
+    directory_fmt = ("{category}", "{creator[full_name]}",
+                     "{date:%Y-%m-%d} {title:R[//R]//}")
     filename_fmt = "{id}_{title}_{num:>02}.{extension}"
     archive_fmt = "{id}_{num}"
     useragent = "Patreon/126.24.0.9 (Android; Android 14; Scale/2.10)"

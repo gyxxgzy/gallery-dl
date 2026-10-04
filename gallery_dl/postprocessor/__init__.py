@@ -17,6 +17,7 @@ modules = {
     "hash",
     "metadata",
     "mtime",
+    "posttext",
     "python",
     "rename",
     "ugoira",
