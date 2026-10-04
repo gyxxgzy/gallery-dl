@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2022-2025 Mike Fährmann
+# Copyright 2022-2026 Mike Fährmann
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License version 2 as
@@ -49,22 +49,30 @@ class ToyhouseExtractor(Extractor):
 
     def _parse_post(self, post, needle='<a href="'):
         extr = text.extract_from(post)
-        return {
+        data = {
             "url": extr(needle, '"'),
-            "date": self.parse_datetime(extr(
-                '</h2>\n            <div class="mb-1">', '<'),
-                "%d %b %Y, %I:%M:%S %p"),
-            "artists": [
-                text.remove_html(artist)
-                for artist in extr(
-                    '<div class="artist-credit">',
-                    '</div>\n                    </div>').split(
-                    '<div class="ar tist-credit">')
-            ],
-            "characters": text.split_html(extr(
-                '<div class="image-characters',
-                '<div class="image-comments">'))[2:],
+            "detail": "\n".join(text.split_html(extr(
+                'class="image-detail', 'class="image-credit'))[2:-2]),
+            "date": (v := extr('', "</div")) and
+            self.parse_datetime(
+                v[v.find('mb-1">')+6:], "%d %b %Y, %I:%M:%S %p"),
+            "artists": text.split_html(extr(
+                '<div class="artist-credit',
+                '<div class="image-character'))[1:],
+            "characters": text.split_html(
+                extr('', 'class="image-') or
+                extr('', 'id="footer"'))[2:-1],
         }
+
+        url = data["url"]
+        if "/watermarks/" in url:
+            data["status"] = "watermark"
+        elif "/thumbnails/" in url:
+            data["status"] = "thumbnail"
+        else:
+            data["status"] = "original"
+
+        return data
 
     def _pagination(self, path):
         url = self.root + path
@@ -119,7 +127,7 @@ class ToyhouseImageExtractor(ToyhouseExtractor):
     subcategory = "image"
     pattern = (r"(?:https?://)?(?:"
                r"(?:www\.)?toyhou\.se/~images|"
-               r"f\d+\.toyhou\.se/file/[^/?#]+/(?:image|watermark)s"
+               r"f\d+\.toyhou\.se/file/[^/?#]+/(?:image|watermark|thumbnail)s"
                r")/(\d+)")
     example = "https://toyhou.se/~images/12345"
 

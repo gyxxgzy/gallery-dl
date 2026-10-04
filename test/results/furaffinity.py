@@ -10,7 +10,6 @@ from gallery_dl.extractor import furaffinity
 __tests__ = (
 {
     "#url"     : "https://www.furaffinity.net/gallery/mirlinthloth/",
-    "#category": ("", "furaffinity", "gallery"),
     "#class"   : furaffinity.FuraffinityGalleryExtractor,
     "#pattern" : r"https://d\d?\.f(uraffinity|acdn)\.net/art/mirlinthloth/\d+/\d+.\w+\.\w+",
     "#range"   : "45-50",
@@ -19,7 +18,6 @@ __tests__ = (
 
 {
     "#url"     : "https://www.furaffinity.net/gallery/markrun15/folder/173240/Inanimate/?",
-    "#category": ("", "furaffinity", "folder"),
     "#class"   : furaffinity.FuraffinityFolderExtractor,
     "#range"   : "46-50",
     "#urla"    : (
@@ -36,7 +34,6 @@ __tests__ = (
 
 {
     "#url"     : "https://www.furaffinity.net/scraps/mirlinthloth/",
-    "#category": ("", "furaffinity", "scraps"),
     "#class"   : furaffinity.FuraffinityScrapsExtractor,
     "#pattern" : r"https://d\d?\.f(uraffinity|acdn)\.net/art/[^/]+(/stories)?/\d+/\d+.\w+.",
     "#count"   : ">= 3",
@@ -44,7 +41,6 @@ __tests__ = (
 
 {
     "#url"     : "https://www.furaffinity.net/favorites/mirlinthloth/",
-    "#category": ("", "furaffinity", "favorite"),
     "#class"   : furaffinity.FuraffinityFavoriteExtractor,
     "#pattern" : r"https://d\d?\.f(uraffinity|acdn)\.net/art/[^/]+/\d+/\d+.\w+\.\w+",
     "#range"   : "45-50",
@@ -68,7 +64,6 @@ __tests__ = (
 
 {
     "#url"     : "https://www.furaffinity.net/search/?q=cute",
-    "#category": ("", "furaffinity", "search"),
     "#class"   : furaffinity.FuraffinitySearchExtractor,
     "#pattern" : r"https://d\d?\.f(uraffinity|acdn)\.net/art/[^/]+/\d+/\d+.\w+\.\w+",
     "#range"   : "45-50",
@@ -78,7 +73,6 @@ __tests__ = (
 {
     "#url"     : "https://www.furaffinity.net/search/?q=leaf&range=1day",
     "#comment" : "first page of search results (#2402)",
-    "#category": ("", "furaffinity", "search"),
     "#class"   : furaffinity.FuraffinitySearchExtractor,
     "#range"   : "1-3",
     "#count"   : 3,
@@ -86,7 +80,6 @@ __tests__ = (
 
 {
     "#url"     : "https://www.furaffinity.net/view/21835115/",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
     "#pattern" : r"https://d\d*\.f(uraffinity|acdn)\.net/(download/)?art/mirlinthloth/music/1488278723/1480267446.mirlinthloth_dj_fennmink_-_bude_s_4_ever\.mp3",
 
@@ -99,7 +92,6 @@ __tests__ = (
     "id"         : 21835115,
     "tags"       : list,
     "title"      : "Bude's 4 Ever",
-    "url"        : r"re:https://d\d?\.f(uraffinity|acdn)\.net/art",
     "user"       : "mirlinthloth",
     "views"      : int,
     "favorites"  : int,
@@ -117,7 +109,6 @@ __tests__ = (
 {
     "#url"     : "https://www.furaffinity.net/view/42166511/",
     "#comment" : "'external' option (#1492)",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
     "#options" : {"external": True},
     "#pattern" : r"https://d\d*\.f(uraffinity|acdn)\.net/|http://www\.postybirb\.com",
@@ -127,7 +118,6 @@ __tests__ = (
 {
     "#url"     : "https://www.furaffinity.net/view/45331225/",
     "#comment" : "no tags (#2277)",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
 
     "artist"     : "Kota_Remminders",
@@ -149,7 +139,6 @@ __tests__ = (
 {
     "#url"     : "https://www.furaffinity.net/view/22964019/",
     "#comment" : "get thumbnails for posts (#1284)",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
 
     "artist"      : "Dwale",
@@ -169,7 +158,6 @@ __tests__ = (
 {
     "#url"     : "https://www.furaffinity.net/view/34260156/",
     "#comment" : "list gallery folders for image",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
 
     "artist"      : "dbd",
@@ -194,7 +182,6 @@ __tests__ = (
 {
     "#url"     : "https://www.furaffinity.net/view/4919026/",
     "#comment" : "'scraps' metadata (#7015)",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
     "#auth"    : False,
 
@@ -219,7 +206,6 @@ __tests__ = (
 {
     "#url"     : "https://www.furaffinity.net/view/46163989/",
     "#comment" : "display names (#7115 #7123)",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
 
     "artist"    : "Pickra the magical feline",
@@ -230,57 +216,54 @@ __tests__ = (
 {
     "#url"     : "https://www.furaffinity.net/view/57587562",
     "#comment" : "login required",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
     "#count"   : 0,
 },
 
 {
     "#url"     : "https://furaffinity.net/view/21835115/",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
 },
 
 {
     "#url"     : "https://fxfuraffinity.net/view/21835115/",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
 },
 
 {
     "#url"     : "https://xfuraffinity.net/view/21835115/",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
 },
 
 {
     "#url"     : "https://fxraffinity.net/view/21835115/",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
 },
 
 {
     "#url"     : "https://sfw.furaffinity.net/view/21835115/",
-    "#category": ("", "furaffinity", "post"),
     "#class"   : furaffinity.FuraffinityPostExtractor,
 },
 
 {
     "#url"     : "https://www.furaffinity.net/full/21835115/",
-    "#category": ("", "furaffinity", "post"),
+    "#class"   : furaffinity.FuraffinityPostExtractor,
+},
+
+{
+    "#url"     : "https://www.furaffinity.net/view/30599265/",
+    "#comment" : "'Image Not Found' (#195)",
     "#class"   : furaffinity.FuraffinityPostExtractor,
 },
 
 {
     "#url"     : "https://www.furaffinity.net/user/mirlinthloth/",
-    "#category": ("", "furaffinity", "user"),
     "#class"   : furaffinity.FuraffinityUserExtractor,
     "#pattern" : "/gallery/mirlinthloth/$",
 },
 
 {
     "#url"     : "https://www.furaffinity.net/user/mirlinthloth/",
-    "#category": ("", "furaffinity", "user"),
     "#class"   : furaffinity.FuraffinityUserExtractor,
     "#options" : {"include": "all"},
     "#pattern" : "/(gallery|scraps|favorites)/mirlinthloth/$",
@@ -289,7 +272,6 @@ __tests__ = (
 
 {
     "#url"     : "https://www.furaffinity.net/watchlist/by/mirlinthloth/",
-    "#category": ("", "furaffinity", "following"),
     "#class"   : furaffinity.FuraffinityFollowingExtractor,
     "#pattern" : furaffinity.FuraffinityUserExtractor.pattern,
     "#range"   : "176-225",
@@ -298,7 +280,6 @@ __tests__ = (
 
 {
     "#url"     : "https://www.furaffinity.net/msg/submissions",
-    "#category": ("", "furaffinity", "submissions"),
     "#class"   : furaffinity.FuraffinitySubmissionsExtractor,
     "#auth"    : True,
     "#pattern" : r"https://d\d?\.f(uraffinity|acdn)\.net/art/mirlinthloth/\d+/\d+.\w+\.\w+",
@@ -308,9 +289,120 @@ __tests__ = (
 
 {
     "#url"     : "https://www.furaffinity.net/msg/submissions/new~56789000@48/",
-    "#category": ("", "furaffinity", "submissions"),
     "#class"   : furaffinity.FuraffinitySubmissionsExtractor,
     "#auth"    : True,
+},
+
+{
+    "#url"     : "https://www.furaffinity.net/journal/10144860/",
+    "#class"   : furaffinity.FuraffinityJournalExtractor,
+    "#results" : """\
+text:Another fantasy themed pack is done, be sure to check it out:<br />
+<br />
+<a class="auto_link " href="https://www.furaffinity.net/view/46139064/"title="https://www.furaffinity.net/view/46139064/" >https://www.furaffinity.net/view/46139064/</a><br />
+<br />
+An interesting addition on this pack was the outfits. While testing it very interesting combinations with other props were possible since i separated many parts of the costumes. I hope you all find it useful for your needs. For now i'll focus on other future packs, i want to make another hybrid soon, and i also had the tigers to think about. So while i think about all of that, go and have some fun with the models.<br />
+<br />
+You all take care out there! See ya soon!\
+""",
+
+    "artist"    : "petruz",
+    "artist_url": "petruz",
+    "date"      : "dt:2022-02-27 00:59:17",
+    "extension" : "htm",
+    "id"        : 10144860,
+    "rating"    : "General",
+    "title"     : "Another Dragonlord follower...",
+    "user"      : "petruz",
+    "comments"  : [
+        {
+            "date": "dt:2022-02-27 05:00:52",
+            "id"  : "58977165",
+            "text": "Ooh😲",
+            "user": "bedford95",
+        },
+        {
+            "date": "dt:2022-02-28 03:04:06",
+            "id"  : "58980942",
+            "user": "thelight777",
+            "text": str,
+        },
+        {
+            "date": "dt:2022-02-28 10:43:46",
+            "id"  : "58981829",
+            "text": "clothes pack, ever?",
+            "user": "whitevixenrae",
+        },
+    ],
+},
+
+{
+    "#url"     : "https://www.furaffinity.net/journal/11382485",
+    "#comment" : "'System Message'",
+    "#class"   : furaffinity.FuraffinityJournalExtractor,
+    "#auth"    : False,
+    "#count"   : 0,
+    "#log"     : """~Unable to download journal 11382485 ("The owner of this page has elected to make it available to registered users only. To view the contents of this page please log in or create an account")""",
+},
+
+{
+    "#url"     : "https://www.furaffinity.net/journals/destellanova/",
+    "#class"   : furaffinity.FuraffinityJournalsExtractor,
+    "#pattern" : r'text:<b class="bbcode bbcode_b">Bastion of the Plains .+',
+    "#count"   : 1,
+
+    "artist"    : "Destellanova",
+    "artist_url": "destellanova",
+    "date"      : "dt:2026-03-08 14:41:11",
+    "extension" : "htm",
+    "id"        : 11321698,
+    "rating"    : "General",
+    "title"     : "(C|L)oredump [0x00]: OCs",
+    "user"      : "destellanova",
+    "comments"  : [
+        {
+            "date": "dt:2026-03-08 14:42:38",
+            "id"  : "61505820",
+            "text": "Howdy ;0",
+            "user": "lulor",
+        },
+        {
+            "date": "dt:2026-03-08 14:54:17",
+            "id"  : "61505830",
+            "text": "Hi <3",
+            "user": "destellanova",
+        },
+        {
+            "date": "dt:2026-03-08 15:00:02",
+            "id"  : "61505837",
+            "user": "lulor",
+            "text": """\
+OH NOW THERES LORE GHFBFNF
+looks like I just said ‘hi’ to a lore post lol\
+""",
+        },
+        {
+            "date": "dt:2026-03-08 15:03:41",
+            "id"  : "61505841",
+            "user": "lulor",
+            "text": """\
+Okay now that I’ve read I’m very interested… I already thought your sona (who I assume is Stella) was very cute and pretty, but now that I know she’s part mimic, I just wanna know more and see more about her >;0
+And maybe give a fluffy hug because dying repeatedly can’t be good on the psyche -v-‘
+You wanna chat on discord or something maybe? :3c @ Uberfighter\
+""",
+        },
+    ],
+},
+
+{
+    "#url"     : "https://www.furaffinity.net/journals/frisky17532/3/",
+    "#class"   : furaffinity.FuraffinityJournalsExtractor,
+    "#range"   : "1-3",
+    "#count"   : 3,
+
+    "artist"    : "Frisky17532",
+    "artist_url": "frisky17532",
+    "rating"    : "General",
 },
 
 )

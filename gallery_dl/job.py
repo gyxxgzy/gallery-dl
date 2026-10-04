@@ -57,6 +57,12 @@ class Job():
                 extr.config_accumulate = extr._config_shared_accumulate
             extr._cfgpath = cfgpath
 
+        if _async := extr.config("async", extr.async_mode):
+            extr._async_queue = _async if isinstance(
+                _async, int) and _async is not True else 10
+            extr._async_items = extr.items
+            extr.items = extr._async_items_main
+
         if actions := extr.config("actions"):
             from .actions import LoggerAdapter, parse_logging
             self._logger_adapter = LoggerAdapter
@@ -190,7 +196,7 @@ class Job():
             log.error(("An unexpected error occurred: %s - %s. "
                        "Please run gallery-dl again with the --verbose flag, "
                        "copy its output and report this issue on "
-                       "https://github.com/mikf/gallery-dl/issues ."),
+                       "https://codeberg.org/mikf/gallery-dl/issues ."),
                       exc.__class__.__name__, exc)
             log.traceback(exc)
             self.status |= 1
@@ -216,7 +222,7 @@ class Job():
         metadata_url = self.metadata_url
 
         if follow := self.extractor.config("follow"):
-            follow = formatter.parse(follow, None, util.identity).format_map
+            follow = self._follow_parse(follow)
             follow_urls = follow_kwdict = None
         else:
             follow = follow_urls = None
@@ -237,7 +243,7 @@ class Job():
                     process = True
                     self.handle_directory(kwdict)
                     if follow is not None:
-                        follow_urls = self._collect_urls(follow(kwdict))
+                        follow_urls = self._follow_collect(follow(kwdict))
                         if follow_urls is not None:
                             follow_kwdict = kwdict.copy()
                 else:
@@ -329,7 +335,16 @@ class Job():
         if init and init != "lazy":
             self.initialize()
 
-    def _collect_urls(self, source):
+    def _follow_parse(self, follow):
+        if isinstance(follow, str):
+            return formatter.parse(follow, None, util.identity).format_map
+
+        follow = [formatter.parse(f, None, util.identity).format_map
+                  for f in follow]
+        self._follow_collect = self._follow_collect_many
+        return lambda kwdict: [f(kwdict) for f in follow]
+
+    def _follow_collect(self, source):
         if not source:
             return None
         if isinstance(source, list):
@@ -338,6 +353,17 @@ class Job():
             if urls := text.extract_urls(source):
                 return urls
 
+    def _follow_collect_many(self, sources):
+        urls = []
+        for source in sources:
+            if not source:
+                continue
+            elif isinstance(source, list):
+                urls.extend(source)
+            elif isinstance(source, str):
+                urls.extend(text.extract_urls(source))
+        return urls or None
+
     def _prepare_predicates(self, target, alt=None, skip=None):
         predicates = []
         extr = self.extractor
@@ -345,6 +371,13 @@ class Job():
         if extr.config(target + "-unique") or \
                 alt is not None and extr.config(alt + "-unique"):
             predicates.append(util.predicate_unique())
+
+        if (pfilter := extr.config(target + "-filter")) or \
+                alt is not None and (pfilter := extr.config(alt + "-filter")):
+            try:
+                predicates.append(util.predicate_filter(pfilter, target))
+            except (SyntaxError, ValueError, TypeError) as exc:
+                extr.log.warning(exc)
 
         if target == "post":
             if dta := extr.config("date-after"):
@@ -370,13 +403,6 @@ class Job():
                                 "%s: %s", exc.__class__.__name__, exc)
                             tl = ()
                 predicates.append(util.predicate_tags(tl, bool(wl)))
-
-        if (pfilter := extr.config(target + "-filter")) or \
-                alt is not None and (pfilter := extr.config(alt + "-filter")):
-            try:
-                predicates.append(util.predicate_filter(pfilter, target))
-            except (SyntaxError, ValueError, TypeError) as exc:
-                extr.log.warning(exc)
 
         if (prange := extr.config(target + "-range")) or \
                 alt is not None and (prange := extr.config(alt + "-range")):
@@ -415,6 +441,7 @@ class DownloadJob(Job):
         self.out = output.select()
         self.visited = set() if parent is None else parent.visited
         self._extractor_filter = None
+        self._children = True
         self._skipcnt = 0
         self._last_error = None
         self._download_errors = {}
@@ -562,7 +589,10 @@ class DownloadJob(Job):
                 if not self._extractor_filter(extr):
                     extr = None
 
-        if extr:
+        if not extr:
+            self._write_unsupported(url)
+
+        elif self._children:
             job = self.__class__(extr, self)
             pfmt = self.pathfmt
             pextr = self.extractor
@@ -622,9 +652,6 @@ class DownloadJob(Job):
                     break
                 except exception.RestartExtraction:
                     pass
-
-        else:
-            self._write_unsupported(url)
 
         if "child-after" in self.hooks:
             pathfmt = self.pathfmt
@@ -761,12 +788,16 @@ class DownloadJob(Job):
         if kwdict is not None:
             pathfmt.set_directory(kwdict)
 
-        self.sleep = util.build_duration_func(cfg("sleep"))
-        self.sleep_skip = util.build_duration_func(cfg("sleep-skip"))
+        self.sleep = util.build_duration_func(
+            cfg("sleep", extr.download_interval))
+        self.sleep_skip = util.build_duration_func(
+            cfg("sleep-skip"))
         self.fallback = cfg("fallback", True)
         if not cfg("download", True):
             # monkey-patch method to do nothing and always return True
             self.download = pathfmt.fix_extension
+        if not cfg("children", True):
+            self._children = False
 
         if archive_path := cfg("archive"):
             archive_table = cfg("archive-table")
@@ -785,6 +816,7 @@ class DownloadJob(Job):
                     archive_format,
                     archive_table,
                     cfg("archive-mode"),
+                    cfg("archive-reuse"),
                     cfg("archive-pragma"),
                     pathfmt,
                 )
@@ -839,7 +871,7 @@ class DownloadJob(Job):
             self.hooks = collections.defaultdict(list)
 
             pp_log = self.get_logger("postprocessor")
-            pp_conf = config.get((), "postprocessor") or {}
+            pp_conf = config.getg("postprocessor") or {}
             pp_opts = cfg("postprocessor-options")
             pp_list = []
 
@@ -849,14 +881,11 @@ class DownloadJob(Job):
                 elif "type" in pp_dict:
                     pp_type = pp_dict["type"]
                     if pp_type in pp_conf:
-                        pp = pp_conf[pp_type].copy()
-                        pp.update(pp_dict)
-                        pp_dict = pp
+                        pp_dict = {**pp_conf[pp_type], **pp_dict}
                     if "name" not in pp_dict:
                         pp_dict["name"] = pp_type
                 if pp_opts:
-                    pp_dict = pp_dict.copy()
-                    pp_dict.update(pp_opts)
+                    pp_dict = {**pp_dict, **pp_opts}
 
                 clist = pp_dict.get("whitelist")
                 if clist is not None:

@@ -5,7 +5,7 @@ gallery-dl
 *gallery-dl* is a command-line program
 to download image galleries and collections
 from several image hosting sites
-(see `Supported Sites <docs/supportedsites.md>`__).
+(see `Supported Sites <https://codeberg.org/mikf/gallery-dl/src/branch/master/docs/supportedsites.md>`__).
 It is a cross-platform tool
 with many
 `command-line <https://gdl-org.github.io/docs/options.html>`__ and
@@ -13,20 +13,10 @@ with many
 options, as well as powerful
 `file-naming capabilities <https://gdl-org.github.io/docs/formatting.html>`__.
 
------
-
-Migration
-=========
-
-| Active development has moved to `Codeberg <https://codeberg.org/mikf/gallery-dl>`__
-| (see `[Announcement] Moving to Codeberg <https://github.com/mikf/gallery-dl/issues/9374>`__ for details)
-
------
-
-
-.. contents::
 
 |pypi| |discord| |build|
+
+.. contents::
 
 
 Dependencies
@@ -248,7 +238,7 @@ from:
 
     gallery-dl [OPTIONS]... URLS...
 
-Use :code:`gallery-dl --help` or see `<docs/options.md>`__
+Use :code:`gallery-dl --help` or see `docs/options.md <https://codeberg.org/mikf/gallery-dl/src/branch/master/docs/options.md>`__
 for a full list of all command-line options.
 
 
@@ -305,10 +295,10 @@ A list of all available configuration options and their descriptions
 can be found at `<https://gdl-org.github.io/docs/configuration.html>`__.
 
 | For a default configuration file with available options set to their
-  default values, see `<docs/gallery-dl.conf>`__.
+  default values, see `docs/gallery-dl.conf <https://codeberg.org/mikf/gallery-dl/src/branch/master/docs/gallery-dl.conf>`__.
 
 | For a commented example with more involved settings and option usage,
-  see `<docs/gallery-dl-example.conf>`__.
+  see `docs/gallery-dl-example.conf <https://codeberg.org/mikf/gallery-dl/src/branch/master/docs/gallery-dl-example.conf>`__.
 
 
 Locations
@@ -352,6 +342,7 @@ and optional for
 ``aryion``,
 ``danbooru``,
 ``e621``,
+``exhentai``,
 ``idolcomplex``,
 ``imgbb``,
 ``inkbunny``,
@@ -362,6 +353,7 @@ and optional for
 ``subscribestar``,
 ``tapas``,
 ``tsumino``,
+``twitter``,
 and ``zerochan``.
 
 You can set the necessary information in your

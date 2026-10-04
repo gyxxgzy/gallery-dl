@@ -92,23 +92,38 @@ class TestExtractorResults(unittest.TestCase):
             self.assertLessEqual(value, range.stop, msg=msg)
             self.assertGreaterEqual(value, range.start, msg=msg)
 
-    def assertLogEqual(self, expected, output):
+    def assertLogEqual(self, exp, out):
+        level, name, message = out.split(":", 2)
+
+        if isinstance(exp, str):
+            return self.assertEqual(exp, message, "#log")
+
+        self.assertEqual(exp[0].lower(), level.lower(), "#log/level")
+        if len(exp) < 3:
+            self.assertEqual(exp[1], message, "#log/message")
+        else:
+            self.assertEqual(exp[1], name   , "#log/name")
+            self.assertEqual(exp[2], message, "#log/message")
+
+    def assertLogsEqual(self, expected, output):
         if isinstance(expected, str):
-            expected = (expected,)
-        self.assertEqual(len(expected), len(output), "#log/count")
+            expected = {expected[1:]} if expected[0] == "~" else (expected,)
 
-        for exp, out in zip(expected, output):
-            level, name, message = out.split(":", 2)
-
-            if isinstance(exp, str):
-                return self.assertEqual(exp, message, "#log")
-
-            self.assertEqual(exp[0].lower(), level.lower(), "#log/level")
-            if len(exp) < 3:
-                self.assertEqual(exp[1], message, "#log/message")
-            else:
-                self.assertEqual(exp[1], name   , "#log/name")
-                self.assertEqual(exp[2], message, "#log/message")
+        if isinstance(expected, set):
+            self.assertLessEqual(len(expected), len(output), "#log/count")
+            for exp in expected:
+                for out in output:
+                    try:
+                        self.assertLogEqual(exp, out)
+                        break
+                    except AssertionError:
+                        pass
+                else:
+                    self.fail(f'#log/Unmatched "{exp}"')
+        else:
+            self.assertEqual(len(output), len(expected), "#log/count")
+            for exp, out in zip(expected, output):
+                self.assertLogEqual(exp, out)
 
     def _run_test(self, result):
         if result.get("#fail"):
@@ -180,7 +195,7 @@ class TestExtractorResults(unittest.TestCase):
             if msg:
                 self.assertEqual(str(cm.exception), msg, msg="#exception/msg")
             if "#log" in result:
-                self.assertLogEqual(result["#log"], log_info.output)
+                self.assertLogsEqual(result["#log"], log_info.output)
             return
 
         try:
@@ -200,7 +215,7 @@ class TestExtractorResults(unittest.TestCase):
             raise
 
         if "#log" in result:
-            self.assertLogEqual(result["#log"], log_info.output)
+            self.assertLogsEqual(result["#log"], log_info.output)
 
         if result.get("#archive", True):
             self.assertEqual(
@@ -263,6 +278,8 @@ class TestExtractorResults(unittest.TestCase):
                 for url in tjob.url_list:
                     self.assertRegex(url, pattern, msg="#pattern")
             else:
+                self.assertEqual(
+                    len(tjob.url_list), len(pattern), msg="#pattern/count")
                 for url, pat in zip(tjob.url_list, pattern):
                     self.assertRegex(url, pat, msg="#pattern")
 
@@ -414,6 +431,8 @@ class TestExtractorResults(unittest.TestCase):
                 else:
                     self.fail(f"Unsupported ISO test '{test}'")
             else:
+                if "\r" in value:
+                    value = value.replace("\r", "")
                 self.assertEqual(test, value, msg=path)
         else:
             self.assertEqual(test, value, msg=path)
@@ -562,9 +581,11 @@ class TestFormatter(formatter.StringFormatter):
     def _apply(self, key, funcs, fmt):
         if key == "extension" or "_parse_optional." in repr(fmt):
             def wrap(obj):
-                obj = obj[key] if key in obj else ""
-                for func in funcs:
-                    obj = func(obj)
+                if obj := obj.get(key):
+                    for func in funcs:
+                        obj = func(obj)
+                else:
+                    obj = ""
                 return fmt(obj)
         elif "<function identity at " in repr(fmt):
             def wrap(obj):

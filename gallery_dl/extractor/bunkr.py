@@ -6,7 +6,7 @@
 # it under the terms of the GNU General Public License version 2 as
 # published by the Free Software Foundation.
 
-"""Extractors for https://bunkr.si/"""
+"""Extractors for https://bunkr.cr/"""
 
 from .common import Extractor
 from .lolisafe import LolisafeAlbumExtractor
@@ -57,18 +57,18 @@ CF_DOMAINS = set()
 
 
 class BunkrAlbumExtractor(LolisafeAlbumExtractor):
-    """Extractor for bunkr.si albums"""
+    """Extractor for bunkr albums"""
     category = "bunkr"
-    root = "https://bunkr.si"
-    root_dl = "https://get.bunkrr.su"
-    root_api = "https://apidl.bunkr.ru"
+    root = "https://bunkr.cr"
+    root_api = "https://dl.bunkr.cr"
+    root_sign = "https://glb-apisign.cdn.cr"
     archive_fmt = "{album_id}_{id|id_url|slug}"
     pattern = BASE_PATTERN + r"/a/([^/?#]+)"
-    example = "https://bunkr.si/a/ID"
+    example = "https://bunkr.cr/a/ID"
 
     def __init__(self, match):
         LolisafeAlbumExtractor.__init__(self, match)
-        domain = self.groups[0] or self.groups[1]
+        domain = self.groups[0] or self.groups[1] or "bunkr.cr"
         if domain not in LEGACY_DOMAINS:
             self.root = "https://" + domain
 
@@ -169,6 +169,8 @@ class BunkrAlbumExtractor(LolisafeAlbumExtractor):
                     item, "size:  ", " ,\n"))
                 file["date"] = self.parse_datetime(text.extr(
                     item, 'timestamp: "', '"'), "%H:%M:%S %d/%m/%Y")
+                tn = text.extr(item, "thumbnail: ", ",\n").replace("\\'", "'")
+                file["thumbnail"] = util.json_loads(tn) if tn else None
 
                 yield file
             except self.exc.ControlException:
@@ -182,21 +184,27 @@ class BunkrAlbumExtractor(LolisafeAlbumExtractor):
                     raise self.exc.AbortExtraction("Album deleted")
 
     def _extract_file(self, data_id):
-        referer = f"{self.root_dl}/file/{data_id}"
-        headers = {"Referer": referer, "Origin": self.root_dl}
-        data = self.request_json(self.endpoint, method="POST", headers=headers,
-                                 json={"id": data_id})
+        headers = {
+            "Referer": self.root_api + "/",
+            "Origin" : self.root_api,
+        }
 
-        if data.get("encrypted"):
-            key = "SECRET_KEY_" + str(data["timestamp"] // 3600)
-            file_url = util.decrypt_xor(data["url"], key.encode())
-        else:
-            file_url = data["url"]
+        url = self.endpoint
+        file = self.request_json(
+            url, method="POST", headers=headers, json={"id": data_id})
 
+        url = self.root_sign + "/sign"
+        sign = self.request_json(
+            url, params={"path": file["path"]}, headers=headers)
+        if "original" in file:
+            sign["n"] = file["original"]
+
+        del headers["Origin"]
         return {
-            "file"          : file_url,
+            "file"          : (f"{file['mediafiles']}{file['path']}"
+                               f"?{text.build_query(sign)}"),
             "id_url"        : data_id,
-            "_http_headers" : {"Referer": referer},
+            "_http_headers" : headers,
             "_http_validate": self._validate,
         }
 
@@ -213,11 +221,11 @@ class BunkrAlbumExtractor(LolisafeAlbumExtractor):
 
 
 class BunkrMediaExtractor(BunkrAlbumExtractor):
-    """Extractor for bunkr.si media links"""
+    """Extractor for bunkr media links"""
     subcategory = "media"
     directory_fmt = ("{category}",)
     pattern = BASE_PATTERN + r"(/[fvid]/[^/?#]+)"
-    example = "https://bunkr.si/f/FILENAME"
+    example = "https://bunkr.cr/f/FILENAME"
 
     def fetch_album(self, album_id):
         try:
@@ -228,6 +236,8 @@ class BunkrMediaExtractor(BunkrAlbumExtractor):
                 page, "<h1", "<").rpartition(">")[2]))
             file["slug"] = album_id.rpartition("/")[2]
             file["uuid"] = text.extr(page, "/thumbs/", ".")
+            tn = text.extr(page, 'property="og:image" content="', '"')
+            file["thumbnail"] = text.unescape(tn) if tn else None
         except Exception as exc:
             self.log.error("%s: %s", exc.__class__.__name__, exc)
             return (), {}
@@ -254,3 +264,12 @@ class BunkrMediaExtractor(BunkrAlbumExtractor):
             except Exception:
                 pass
         return album_id, "", -1
+
+
+class BunkrDirectLinkExtractor(BunkrMediaExtractor):
+    subcategory = "direct-link"
+    pattern = r"https://cdn\d*\.bunkr\.ru()()(/.+)"
+    example = "https://cdn123.bunkr.ru/NAME-ID.EXT"
+
+    def fetch_album(self, album_id):
+        return BunkrMediaExtractor.fetch_album(self, "/f" + album_id)

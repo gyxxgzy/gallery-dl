@@ -126,6 +126,10 @@ class BasePostprocessorTest(unittest.TestCase):
 
 class ActionsTest(BasePostprocessorTest):
 
+    def tearDown(self):
+        super().tearDown()
+        util.FLAGS.clear()
+
     def test_raises(self):
         self._create({"action": "raise AbortExtraction foobar"})
 
@@ -148,6 +152,26 @@ class ActionsTest(BasePostprocessorTest):
         self.assertEqual(self.job.status, 0)
         self._trigger()
         self.assertEqual(self.job.status, 123)
+
+    def test_flag_clear(self):
+        self._create({"action": "flag download clear"})
+
+        util.FLAGS.DOWNLOAD = "stop"
+        self._trigger()
+        self.assertEqual(util.FLAGS.DOWNLOAD, None)
+        self._trigger()
+        self.assertEqual(util.FLAGS.DOWNLOAD, None)
+
+    def test_flag_toggle(self):
+        self._create({"action": "flag download toggle"})
+
+        self.assertEqual(util.FLAGS.DOWNLOAD, None)
+        self._trigger()
+        self.assertEqual(util.FLAGS.DOWNLOAD, "stop")
+        self._trigger()
+        self.assertEqual(util.FLAGS.DOWNLOAD, None)
+        self._trigger()
+        self.assertEqual(util.FLAGS.DOWNLOAD, "stop")
 
 
 class ClassifyTest(BasePostprocessorTest):
@@ -421,6 +445,27 @@ class ExecTest(BasePostprocessorTest):
         pp.archive.close()
 
         m_aa.assert_called_once_with(self.pathfmt.kwdict)
+        m_ac.assert_called_once()
+
+    def test_archive_fail(self):
+        pp = self._create({
+            "command": ["echo", "failure"],
+            "archive": ":memory:",
+            "event"  : "finalize",
+        })
+
+        self.assertIsInstance(pp.archive, archive.DownloadArchive)
+
+        with patch.object(pp.archive, "add") as m_aa, \
+                patch.object(pp.archive, "close") as m_ac, \
+                patch("gallery_dl.util.Popen") as p:
+            p.return_value = i = Mock()
+            i.wait.return_value = 123
+            with self.assertLogs():
+                self._trigger(("finalize",))
+        pp.archive.close()
+
+        m_aa.assert_not_called()
         m_ac.assert_called_once()
 
     def test_verbose_string(self):
@@ -999,6 +1044,42 @@ class MetadataTest(BasePostprocessorTest):
 }
 """)
 
+    def test_metadata_option_empty_json(self):
+        self._create({"mode": "json", "include": "_"})
+
+        with patch("builtins.open", mock_open()) as m:
+            self._trigger()
+
+        m.assert_not_called()
+        self.assertEqual(self._output(m), "")
+
+    def test_metadata_option_empty_tags(self):
+        self._create({"mode": "tags"})
+
+        with patch("builtins.open", mock_open()) as m:
+            self._trigger()
+
+        m.assert_not_called()
+        self.assertEqual(self._output(m), "")
+
+    def test_metadata_option_empty_fmt(self):
+        self._create({"format": "{''}"})
+
+        with patch("builtins.open", mock_open()) as m:
+            self._trigger()
+
+        m.assert_not_called()
+        self.assertEqual(self._output(m), "")
+
+    def test_metadata_option_empty_true(self):
+        self._create({"empty": True, "format": "{''}"})
+
+        with patch("builtins.open", mock_open()) as m:
+            self._trigger()
+
+        m.assert_called_once()
+        self.assertEqual(self._output(m), "")
+
     def test_archive(self):
         pp = self._create({
             "archive": ":memory:",
@@ -1058,6 +1139,17 @@ class MtimeTest(BasePostprocessorTest):
         self._trigger()
         self.assertEqual(self.pathfmt.kwdict["_mtime_meta"], 315532800)
 
+    def test_mtime_directory(self):
+        self._create({"target": "directory"}, {"date": 315532800})
+
+        with patch("os.utime") as ut:
+            self._trigger(("post-after",))
+
+        ut.assert_called_once()
+        args = ut.mock_calls[0].args
+        self.assertEqual(args[0], self.pathfmt.realdirectory)
+        self.assertEqual(args[1][1], 315532800)
+
 
 class PythonTest(BasePostprocessorTest):
 
@@ -1084,6 +1176,37 @@ class PythonTest(BasePostprocessorTest):
         self.assertNotIn("_result", self.pathfmt.kwdict)
         self._trigger()
         self.assertEqual(self.pathfmt.kwdict["_result"], 24)
+
+    def test_arguments(self):
+        path = os.path.join(self.dir.name, "module.py")
+        self._write_module(path)
+
+        self._create({
+            "function": f"{path}:calc_fma",
+            "args"    : ["{'1'!i}", "\fE 2", "3"],
+        })
+
+        self.assertNotIn("_result", self.pathfmt.kwdict)
+        self._trigger()
+        self.assertEqual(self.pathfmt.kwdict["_result"], 1*2+3)
+
+    def test_arguments_kwargs(self):
+        path = os.path.join(self.dir.name, "module.py")
+        self._write_module(path)
+
+        self._create({
+            "function": f"{path}:calc_fma",
+            "args"    : ["{_v1:A-120/I}"],
+            "kwargs"  : {"c": "\fF -{2*_v1 - _v2}",
+                         "b": "\fE _v2 // 23"},
+        }, {
+            "_v1": 123,
+            "_v2": 234,
+        })
+
+        self.assertNotIn("_result", self.pathfmt.kwdict)
+        self._trigger()
+        self.assertEqual(self.pathfmt.kwdict["_result"], 3*10-12)
 
     def test_eval(self):
         self._create({"mode": "eval", "expression": "abort()"})
@@ -1119,6 +1242,9 @@ class PythonTest(BasePostprocessorTest):
             fp.write("""
 def calc(kwdict):
     kwdict["_result"] = kwdict["_value"] * 2
+
+def calc_fma(kwdict, a, b, c):
+    kwdict["_result"] = a * b + int(c)
 """)
 
 

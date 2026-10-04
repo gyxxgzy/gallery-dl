@@ -51,10 +51,12 @@ class Extractor():
     tls_impersonate = None
     useragent = util.USERAGENT_FIREFOX
     geobypass = None
+    download_interval = 0.0
     request_interval = 0.0
     request_interval_min = 0.0
     request_interval_429 = 60.0
     request_timestamp = 0.0
+    async_mode = False
     exc = exception
     finalize = skip_files = skip_posts = skip_children = skip_date = \
         import_blacklist = None
@@ -272,6 +274,22 @@ class Extractor():
         return self.request(url, **kwargs).headers.get("location", "")
 
     def request_json(self, url, **kwargs):
+        if headers := kwargs.get("headers"):
+            headers.setdefault("Referer", self.root + "/")
+            headers.setdefault("Origin" , self.root)
+            headers.setdefault("Sec-Fetch-Dest", "empty")
+            headers.setdefault("Sec-Fetch-Mode", "cors")
+            headers.setdefault("Sec-Fetch-Site", "same-site")
+        elif headers is None:
+            kwargs["headers"] = {
+                "Referer": self.root + "/",
+                "Origin" : self.root,
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-site",
+            }
+        else:
+            del kwargs["headers"]
         response = self.request(url, **kwargs)
 
         try:
@@ -535,7 +553,7 @@ class Extractor():
         headers.clear()
         ssl_options = ssl_ciphers = 0
 
-        # .netrc Authorization headers are alwsays disabled
+        # .netrc Authorization headers are always disabled
         session.trust_env = True if self.config("proxy-env", True) else False
 
         browser = self.config("browser")
@@ -554,10 +572,13 @@ class Extractor():
             elif platform == "macos":
                 platform = "Macintosh; Intel Mac OS X 15.5"
 
-            if browser == "chrome":
-                if platform.startswith("Macintosh"):
-                    platform = platform.replace(".", "_")
-            else:
+            if browser.startswith("chrome") and \
+                    platform.startswith("Macintosh"):
+                platform = platform.replace(".", "_")
+
+            if browser not in HEADERS:
+                self.log.warning("Unsupported browser %r. "
+                                 "Falling back to 'firefox'", browser)
                 browser = "firefox"
 
             for key, value in HEADERS[browser]:
@@ -752,6 +773,8 @@ class Extractor():
         try:
             with open(path_tmp, "w", encoding="utf-8") as fp:
                 util.cookiestxt_store(fp, self.cookies)
+            if util.SYMLINKS and os.path.islink(path):
+                path = os.path.realpath(path)
             os.replace(path_tmp, path)
         except OSError as exc:
             self.log.error("cookies: Failed to write to '%s' "
@@ -826,11 +849,48 @@ class Extractor():
                       "</script>"))
 
     def _extract_nextdata(self, page):
+        pos = page.find(' id="__NEXT_DATA__"')
+        if pos < 0:
+            pos = page.find(" id='__NEXT_DATA__'")
         return util.json_loads(
-            text.extr(page, ' id="__NEXT_DATA__" type="application/json">',
-                      "</script>") or
-            text.extr(page, " id='__NEXT_DATA__' type='application/json'>",
-                      "</script>"))
+            page[page.find(">", pos)+1:page.find("</script>", pos)])
+
+    def _extract_nuxtdata(self, page):
+        pos = page.find(' id="__NUXT_DATA__"')
+        if pos < 0:
+            pos = page.find(" id='__NUXT_DATA__'")
+        return self.utils("/nuxt").resolve(util.json_loads(
+            page[page.find(">", pos)+1:page.find("</script>", pos)]))
+
+    def _async_items_main(self):
+        messages = queue.Queue(self._async_queue)
+        thread = threading.Thread(
+            target=self._async_items_thread,
+            args=(messages,),
+            daemon=True,
+        )
+
+        self._async_exception = None
+        self.log.debug("Starting background thread")
+
+        thread.start()
+        while True:
+            msg = messages.get()
+            if msg is None:
+                thread.join()
+                if self._async_exception:
+                    raise self._async_exception
+                return
+            yield msg
+            messages.task_done()
+
+    def _async_items_thread(self, messages):
+        try:
+            for msg in self._async_items():
+                messages.put(msg)
+        except Exception as exc:
+            self._async_exception = exc
+        messages.put(None)
 
     def _get_date_min_max(self, dmin=None, dmax=None):
         """Retrieve and parse 'date-min' and 'date-max' config values"""
@@ -895,6 +955,7 @@ class GalleryExtractor(Extractor):
     filename_fmt = "{category}_{gallery_id}_{num:>03}.{extension}"
     directory_fmt = ("{category}", "{gallery_id} {title}")
     archive_fmt = "{gallery_id}_{num}"
+    start = 1
     enum = "num"
 
     def __init__(self, match, url=None):
@@ -920,10 +981,11 @@ class GalleryExtractor(Extractor):
 
         if "count" in data:
             if self.config("page-reverse"):
-                images = util.enumerate_reversed(imgs, 1, data["count"])
+                images = util.enumerate_reversed(
+                    imgs, self.start, data["count"])
             else:
                 images = zip(
-                    range(1, data["count"]+1),
+                    range(self.start, data["count"]+1),
                     imgs,
                 )
         else:
@@ -935,7 +997,7 @@ class GalleryExtractor(Extractor):
             else:
                 if self.config("page-reverse"):
                     enum = util.enumerate_reversed
-            images = enum(imgs, 1)
+            images = enum(imgs, self.start)
 
         yield Message.Directory, "", data
         enum_key = self.enum
@@ -1041,10 +1103,13 @@ class Dispatch():
         pass
 
     def _dispatch_extractors(self, extractor_data, default=(), alt=None):
-        extractors = {
-            data[0].subcategory: data
-            for data in extractor_data
-        }
+        if isinstance(extractor_data, dict):
+            extractors = extractor_data
+        else:
+            extractors = {
+                data[0].subcategory: data
+                for data in extractor_data
+            }
 
         include = self.config("include", default) or ()
         if include == "all":
@@ -1066,40 +1131,6 @@ class Dispatch():
             else:
                 results.append((Message.Queue, url, {"_extractor": extr}))
         return iter(results)
-
-
-class AsynchronousMixin():
-    """Run info extraction in a separate thread"""
-
-    def __iter__(self):
-        self.initialize()
-
-        messages = queue.Queue(5)
-        thread = threading.Thread(
-            target=self.async_items,
-            args=(messages,),
-            daemon=True,
-        )
-
-        thread.start()
-        while True:
-            msg = messages.get()
-            if msg is None:
-                thread.join()
-                return
-            if isinstance(msg, Exception):
-                thread.join()
-                raise msg
-            yield msg
-            messages.task_done()
-
-    def async_items(self, messages):
-        try:
-            for msg in self.items():
-                messages.put(msg)
-        except Exception as exc:
-            messages.put(exc)
-        messages.put(None)
 
 
 class BaseExtractor(Extractor):
@@ -1394,6 +1425,27 @@ CACHE_UTILS = {}
 CATEGORY_MAP = ()
 
 
+HEADERS_FIREFOX_153 = (
+    ("User-Agent", "Mozilla/5.0 ({}; rv:153.0) Gecko/20100101 Firefox/153.0"),
+    ("Accept", "text/html,application/xhtml+xml,"
+               "application/xml;q=0.9,*/*;q=0.8"),
+    ("Accept-Language", "en-US,en;q=0.9"),
+    ("Accept-Encoding", None),
+    ("Referer", None),
+    ("Content-Type", None),
+    ("Content-Length", None),
+    ("Origin", None),
+    ("Alt-Used", None),
+    ("Connection", "keep-alive"),
+    ("Cookie", None),
+    ("Upgrade-Insecure-Requests", "1"),
+    ("Sec-Fetch-Dest", "document"),
+    ("Sec-Fetch-Mode", "navigate"),
+    ("Sec-Fetch-Site", "same-site"),
+    #  ("Sec-Fetch-User", "?1"),
+    ("Priority", "u=0, i"),
+    ("TE", "trailers"),
+)
 HEADERS_FIREFOX_140 = (
     ("User-Agent", "Mozilla/5.0 ({}; rv:140.0) Gecko/20100101 Firefox/140.0"),
     ("Accept", "text/html,application/xhtml+xml,"
@@ -1425,6 +1477,24 @@ HEADERS_FIREFOX_128 = (
     ("Sec-Fetch-Mode", "no-cors"),
     ("Sec-Fetch-Site", "same-origin"),
     ("TE", "trailers"),
+)
+HEADERS_CHROMIUM_150 = (
+    ("Connection", "keep-alive"),
+    ("sec-ch-ua", '"Not;A=Brand";v="8", "Chromium";v="150"'),
+    ("sec-ch-ua-mobile", "?0"),
+    ("sec-ch-ua-platform", '"Windows"'),
+    ("Upgrade-Insecure-Requests", "1"),
+    ("User-Agent", "Mozilla/5.0 ({}) AppleWebKit/537.36 (KHTML, "
+                   "like Gecko) Chrome/150.0.0.0 Safari/537.36"),
+    ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,"
+               "image/avif,image/webp,image/apng,*/*;q=0.8,"
+               "application/signed-exchange;v=b3;q=0.7"),
+    ("Sec-Fetch-Site", "none"),
+    ("Sec-Fetch-Mode", "navigate"),
+    #  ("Sec-Fetch-User", "?1"),
+    ("Sec-Fetch-Dest", "document"),
+    ("Accept-Encoding", None),
+    ("Accept-Language", "en-US,en;q=0.9"),
 )
 HEADERS_CHROMIUM_138 = (
     ("Connection", "keep-alive"),
@@ -1463,15 +1533,35 @@ HEADERS_CHROMIUM_111 = (
     ("content-length", None),
 )
 HEADERS = {
-    "firefox"    : HEADERS_FIREFOX_140,
+    "firefox"    : HEADERS_FIREFOX_153,
+    "firefox/153": HEADERS_FIREFOX_153,
     "firefox/140": HEADERS_FIREFOX_140,
     "firefox/128": HEADERS_FIREFOX_128,
-    "chrome"     : HEADERS_CHROMIUM_138,
+    "chrome"     : HEADERS_CHROMIUM_150,
+    "chrome/150" : HEADERS_CHROMIUM_150,
     "chrome/138" : HEADERS_CHROMIUM_138,
     "chrome/111" : HEADERS_CHROMIUM_111,
 }
 
-CIPHERS_FIREFOX = (
+CIPHERS_FIREFOX_153 = (
+    "TLS_AES_128_GCM_SHA256:"
+    "TLS_CHACHA20_POLY1305_SHA256:"
+    "TLS_AES_256_GCM_SHA384:"
+    "ECDHE-ECDSA-AES128-GCM-SHA256:"
+    "ECDHE-RSA-AES128-GCM-SHA256:"
+    "ECDHE-ECDSA-CHACHA20-POLY1305:"
+    "ECDHE-RSA-CHACHA20-POLY1305:"
+    "ECDHE-ECDSA-AES256-GCM-SHA384:"
+    "ECDHE-RSA-AES256-GCM-SHA384:"
+    "ECDHE-ECDSA-AES256-SHA:"
+    "ECDHE-RSA-AES128-SHA:"
+    "ECDHE-RSA-AES256-SHA:"
+    "AES128-GCM-SHA256:"
+    "AES256-GCM-SHA384:"
+    "AES128-SHA:"
+    "AES256-SHA"
+)
+CIPHERS_FIREFOX_140 = (
     "TLS_AES_128_GCM_SHA256:"
     "TLS_CHACHA20_POLY1305_SHA256:"
     "TLS_AES_256_GCM_SHA384:"
@@ -1508,10 +1598,12 @@ CIPHERS_CHROMIUM = (
     "AES256-SHA"
 )
 CIPHERS = {
-    "firefox"    : CIPHERS_FIREFOX,
-    "firefox/140": CIPHERS_FIREFOX,
-    "firefox/128": CIPHERS_FIREFOX,
+    "firefox"    : CIPHERS_FIREFOX_153,
+    "firefox/153": CIPHERS_FIREFOX_153,
+    "firefox/140": CIPHERS_FIREFOX_140,
+    "firefox/128": CIPHERS_FIREFOX_140,
     "chrome"     : CIPHERS_CHROMIUM,
+    "chrome/150" : CIPHERS_CHROMIUM,
     "chrome/138" : CIPHERS_CHROMIUM,
     "chrome/111" : CIPHERS_CHROMIUM,
 }
@@ -1536,7 +1628,7 @@ except AttributeError:
     ZSTD = False
 
 # set (urllib3) warnings filter
-action = config.get((), "warnings", "default")
+action = config.getg("warnings", "default")
 if action:
     try:
         import warnings

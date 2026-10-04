@@ -197,6 +197,7 @@ def remap_categories():
             ("coomerparty" , "coomer"),
             ("kemonoparty" , "kemono"),
             ("giantessbooru", "sizebooru"),
+            ("koharu"      , "schalenetwork"),
             ("naver"       , "naver-blog"),
             ("chzzk"       , "naver-chzzk"),
             ("naverwebtoon", "naver-webtoon"),
@@ -209,8 +210,9 @@ def remap_categories():
         cmap = cmap.items()
 
     for old, new in cmap:
-        if old in opts and new not in opts:
-            opts[new] = opts[old]
+        if old in opts:
+            opts[new] = ({**opts[old], **opts[new]} if new in opts else
+                         opts[old])
 
 
 def load(files=None, strict=False, loads=None, conf=_config):
@@ -249,6 +251,9 @@ def load(files=None, strict=False, loads=None, conf=_config):
 def clear():
     """Reset configuration to an empty state"""
     _config.clear()
+
+
+getg = _config.get
 
 
 def get(path, key, default=None, conf=_config):

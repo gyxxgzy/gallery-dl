@@ -29,15 +29,12 @@ class FanboxExtractor(Extractor):
 
     def _init(self):
         self.headers = {
-            "Accept" : "application/json, text/plain, */*",
-            "Origin" : "https://www.fanbox.cc",
-            "Referer": "https://www.fanbox.cc/",
-            "Cookie" : None,
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-site",
+            "Accept": "application/json, text/plain, */*",
+            "Cookie": None,
         }
         self.embeds = self.config("embeds", True)
+        self.fee_min = self.config("fee-min")
+        self.fee_max = self.config("fee-max")
 
         if includes := self.config("metadata"):
             if isinstance(includes, str):
@@ -59,21 +56,9 @@ class FanboxExtractor(Extractor):
             FanboxExtractor._warning = False
 
     def items(self):
-        fee_max = self.config("fee-max")
-
         for item in self.posts():
-            if fee_max is not None and fee_max < item["feeRequired"]:
-                self.log.warning("Skipping post %s (feeRequired of %s > %s)",
-                                 item["id"], item["feeRequired"], fee_max)
-            else:
-                try:
-                    url = ("https://api.fanbox.cc/post.info?postId=" +
-                           item["id"])
-                    item = self.request_json(url, headers=self.headers)["body"]
-                except Exception as exc:
-                    self.log.warning("Skipping post %s (%s: %s)",
-                                     item["id"], exc.__class__.__name__, exc)
-
+            if self._check_fee(item):
+                item = self._request_post(item)
             content_body, post = self._extract_post(item)
             yield Message.Directory, "", post
             yield from self._get_urls_from_post(content_body, post)
@@ -89,6 +74,25 @@ class FanboxExtractor(Extractor):
             yield from body["items"]
 
             url = body["nextUrl"]
+
+    def _check_fee(self, item):
+        if self.fee_min is not None and self.fee_min > item["feeRequired"]:
+            self.log.warning("Skipping post %s (feeRequired of %s < %s)",
+                             item["id"], item["feeRequired"], self.fee_min)
+        elif self.fee_max is not None and self.fee_max < item["feeRequired"]:
+            self.log.warning("Skipping post %s (feeRequired of %s > %s)",
+                             item["id"], item["feeRequired"], self.fee_max)
+        else:
+            return True
+
+    def _request_post(self, item):
+        try:
+            url = "https://api.fanbox.cc/post.info?postId=" + item["id"]
+            item = self.request_json(url, headers=self.headers)["body"]["post"]
+        except Exception as exc:
+            self.log.warning("Skipping post %s (%s: %s)",
+                             item["id"], exc.__class__.__name__, exc)
+        return item
 
     def _extract_post(self, post):
         """Fetch and process post data"""
@@ -194,7 +198,7 @@ class FanboxExtractor(Extractor):
             "hasAdultContent": None,
             "paymentMethod"  : None,
         }}
-        for plan in data["body"]:
+        for plan in data["body"]["plans"]:
             del plan["user"]
             plans[plan["fee"]] = plan
 
@@ -355,18 +359,32 @@ class FanboxExtractor(Extractor):
 class FanboxCreatorExtractor(FanboxExtractor):
     """Extractor for a pixivFANBOX creator's works"""
     subcategory = "creator"
-    pattern = USER_PATTERN + r"(?:/posts)?/?$"
+    pattern = USER_PATTERN + r"(?:/posts)?/?(?:\?([^#]+))?$"
     example = "https://USER.fanbox.cc/"
+    _offset = 0
+
+    def skip_posts(self, num):
+        self._offset += num
+        return num
 
     def posts(self):
+        c1, c2, qs = self.groups
+
+        params = text.parse_query(qs)
+        if "page" in params:
+            self._offset += text.parse_int(params["page"]) * 10
+        elif offset := self.config("offset"):
+            self._offset += offset
+
         url = "https://api.fanbox.cc/post.paginateCreator?creatorId="
-        creator_id = self.groups[0] or self.groups[1]
-        return self._pagination_creator(url + creator_id)
+        return self._pagination_creator(url + (c1 or c2))
 
     def _pagination_creator(self, url):
-        urls = self.request_json(url, headers=self.headers)["body"]
-        if offset := self.config("offset"):
-            quotient, remainder = divmod(offset, 10)
+        urls = self.request_json(
+            url, headers=self.headers)["body"]["pageUrls"]
+
+        if self._offset:
+            quotient, remainder = divmod(self._offset, 10)
             if quotient:
                 urls = urls[quotient:]
         else:
@@ -374,7 +392,8 @@ class FanboxCreatorExtractor(FanboxExtractor):
 
         for url in urls:
             url = text.ensure_http_scheme(url)
-            posts = self.request_json(url, headers=self.headers)["body"]
+            posts = self.request_json(
+                url, headers=self.headers)["body"]["posts"]
             if remainder:
                 posts = posts[remainder:]
                 remainder = None
@@ -402,7 +421,12 @@ class FanboxPostExtractor(FanboxExtractor):
     example = "https://USER.fanbox.cc/posts/12345"
 
     def posts(self):
-        return ({"id": self.groups[2], "feeRequired": 0},)
+        item = {"id": self.groups[2], "feeRequired": 0}
+        post = self._request_post(item)
+        if not self._check_fee(post):
+            post = item
+        self._check_fee = util.false
+        return (post,)
 
 
 class FanboxHomeExtractor(FanboxExtractor):

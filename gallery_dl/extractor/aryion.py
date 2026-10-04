@@ -52,7 +52,9 @@ class AryionExtractor(Extractor):
 
         response = self.request(url, method="POST", data=data)
         if b"You have been successfully logged in." not in response.content:
-            raise self.exc.AuthenticationError()
+            err = text.extr(response.text, '<div class="error">', "<")
+            raise self.exc.AuthenticationError(
+                f"'{text.unescape(err)}'" if err else None)
         return {c: response.cookies[c] for c in self.cookies_names}
 
     def items(self):
@@ -106,7 +108,8 @@ class AryionExtractor(Extractor):
             pos = page.find("Next &gt;&gt;")
             if pos < 0:
                 return
-            url = self.root + text.rextr(page, "href='", "'", pos)
+            url = self.root + text.unescape(text.rextr(
+                page, "href='", "'", pos))
 
     def _pagination_folders(self, url, folder=None, seen=None):
         if folder is None:
@@ -144,24 +147,33 @@ class AryionExtractor(Extractor):
 
         self.kwdict["folder"] = ""
 
+    def _pagination_users(self, url, params):
+        while True:
+            page = self.request(url, params=params).text
+            pos = page.find("id='gallery-items'")
+
+            yield from text.extract_iter(
+                page, "class='user-link' href='", "'", pos)
+
+            if ">Next &gt;&gt;<" not in page:
+                break
+            params["p"] += 1
+
     def _parse_post(self, post_id):
         url = f"{self.root}/g4/data.php?id={post_id}"
-        with self.request(url, method="HEAD", fatal=False) as response:
+        with self.request(url, method="HEAD", fatal=False,
+                          allow_redirects=False) as response:
 
             if response.status_code >= 400:
                 self.log.warning(
                     "Unable to fetch post %s ('%s %s')",
                     post_id, response.status_code, response.reason)
                 return None
-            headers = response.headers
-
-            # folder
-            if headers["content-type"] in {
-                "application/x-folder",
-                "application/x-comic-folder",
-                "application/x-comic-folder-nomerge",
-            }:
+            if response.status_code >= 300:
+                # folder
                 return False
+
+            headers = response.headers
 
             # get filename from 'Content-Disposition' header
             fname, _, ext = text.filename_from_contentdisposition(
@@ -187,7 +199,7 @@ class AryionExtractor(Extractor):
             "id"    : text.parse_int(post_id),
             "url"   : url,
             "user"  : self.user or artist,
-            "title" : title,
+            "title" : text.unescape(title),
             "artist": artist,
             "description": text.unescape(extr(
                 'property="og:description" content="', '"')),
@@ -198,8 +210,8 @@ class AryionExtractor(Extractor):
             "views" : text.parse_int(extr("Views</b>:", "<").replace(",", "")),
             "width" : text.parse_int(extr("Resolution</b>:", "x")),
             "height": text.parse_int(extr("", "<")),
-            "comments" : text.parse_int(extr("Comments</b>:", "<")),
             "favorites": text.parse_int(extr("Favorites</b>:", "<")),
+            "comments" : text.parse_int(extr("Comments</b>:", "<")),
             "tags"     : text.split_html(extr("class='taglist'>", "</span>")),
             "filename" : fname,
             "extension": ext,
@@ -249,9 +261,9 @@ class AryionFavoriteExtractor(AryionExtractor):
         return self._pagination_folders(url, self.groups[1])
 
 
-class AryionWatchExtractor(AryionExtractor):
-    """Extractor for your watched users and tags"""
-    subcategory = "watch"
+class AryionMessagepageExtractor(AryionExtractor):
+    """Extractor for submissions by watched users and tags"""
+    subcategory = "messagepage"
     directory_fmt = ("{category}", "{user!l}",)
     pattern = BASE_PATTERN + r"/messagepage\.php()"
     example = "https://aryion.com/g4/messagepage.php"
@@ -319,3 +331,19 @@ class AryionPostExtractor(AryionExtractor):
     def posts(self):
         post_id, self.user = self.user, None
         return (post_id,)
+
+
+class AryionWatchExtractor(AryionExtractor):
+    """Extractor for watched users"""
+    subcategory = "watch"
+    directory_fmt = ("{category}", "{user!l}",)
+    pattern = BASE_PATTERN + r"/watch\.php\?id=([^&#]+)"
+    example = "https://aryion.com/g4/watch.php?id=USER"
+
+    def items(self):
+        data = {"_extractor": AryionGalleryExtractor}
+
+        url = f"{self.root}/g4/watch.php"
+        params = {"id": self.user, "p": 1}
+        for path in self._pagination_users(url, params):
+            yield Message.Queue, self.root + path, data

@@ -12,7 +12,6 @@
 from .common import Extractor, Message, Dispatch
 from .. import text, util
 import itertools
-import binascii
 
 BASE_PATTERN = r"(?:https?://)?(?:www\.)?instagram\.com"
 USER_PATTERN = BASE_PATTERN + r"/(?!(?:p|tv|reel|explore|stories)/)([^/?#]+)"
@@ -27,6 +26,7 @@ class InstagramExtractor(Extractor):
     root = "https://www.instagram.com"
     cookies_domain = ".instagram.com"
     cookies_names = ("sessionid",)
+    browser = "chrome"
     useragent = util.USERAGENT_CHROME
     request_interval = (6.0, 12.0)
 
@@ -45,11 +45,15 @@ class InstagramExtractor(Extractor):
         self.cookies.set(
             "csrftoken", self.csrf_token, domain=self.cookies_domain)
 
-        if self.config("api") == "graphql":
-            self.api = InstagramGraphqlAPI(self)
-        else:
-            self.api = InstagramRestAPI(self)
+        if not (wd := self.config("wd", False)):
+            self.cookies.set("wd", None, domain=self.cookies_domain)
+        elif isinstance(wd, str):
+            self.cookies.set("wd", wd, domain=self.cookies_domain)
 
+        self.api = InstagramAPI(self)
+
+        self._highlight_covers = \
+            True if self.config("covers") else False
         self._static_video = \
             True if self.config("static-videos", True) else False
         self._warn_video = \
@@ -61,13 +65,17 @@ class InstagramExtractor(Extractor):
 
     def items(self):
         self.login()
-
         data = self.metadata()
 
         if videos := self.config("videos", True):
             self.videos_dash = videos_dash = (videos != "merged")
         else:
             self.videos_dash = False
+
+        if audio := self.config("audio", False):
+            audio_dash = (audio != "merged")
+        else:
+            audio_dash = False
 
         if previews := self.config("previews", False):
             if isinstance(previews, str):
@@ -80,7 +88,7 @@ class InstagramExtractor(Extractor):
             previews_video = previews_audio = False
         del previews
 
-        audio = self.config("audio", False)
+        pinned = self.config("pinned", True)
         max_posts = self.config("max-posts")
         order = self.config("order-files")
         reverse = order[0] in {"r", "d"} if order else False
@@ -91,10 +99,11 @@ class InstagramExtractor(Extractor):
             posts = itertools.islice(posts, max_posts)
 
         for post in posts:
-            if "__typename" in post:
-                post = self._parse_post_graphql(post)
-            else:
-                post = self._parse_post_rest(post)
+            post = self._parse_post(post)
+
+            if not pinned and post.get("pinned"):
+                self.log.debug("%s: Skipping pinned post", post.get("post_id"))
+                continue
 
             if self._user:
                 post["user"] = self._user
@@ -114,9 +123,13 @@ class InstagramExtractor(Extractor):
                     if audio:
                         file["_http_headers"] = videos_headers
                         text.nameext_from_url(url, file)
+                        if audio_dash and "_ytdl_manifest_data" in file:
+                            file["_fallback"] = (url,)
+                            file["_ytdl_manifest"] = "dash"
+                            url = f"ytdl:{post['post_url']}{file['num']}.m4a"
                         yield Message.Url, url, file
-                    if previews_audio:
-                        file["media_id"] += "p"
+                    if previews_audio and file.get("display_url"):
+                        file["media_id"] = f"{file['media_id']}p"
                     else:
                         continue
                 elif url := file.get("video_url"):
@@ -129,7 +142,7 @@ class InstagramExtractor(Extractor):
                             url = f"ytdl:{post['post_url']}{file['num']}.mp4"
                         yield Message.Url, url, file
                     if previews_video:
-                        file["media_id"] += "p"
+                        file["media_id"] = f"{file['media_id']}p"
                     else:
                         continue
 
@@ -195,26 +208,41 @@ class InstagramExtractor(Extractor):
                        "supported. Use browser cookies instead.")
         return {}
 
-    def _parse_post_rest(self, post):
+    def _parse_post(self, post):
         if "items" in post:  # story or highlight
             items = post["items"]
-            reel_id = str(post["id"]).rpartition(":")[2]
-            if expires := post.get("expiring_at"):
-                post_url = f"{self.root}/stories/{post['user']['username']}/"
-            else:
+            reel_type, _, reel_id = str(post["id"]).rpartition(":")
+            if reel_type or post.get("reel_type") == "highlight_reel":
                 post_url = f"{self.root}/stories/highlights/{reel_id}/"
+                expires = None
+                reel_type = "highlight"
+            else:
+                post_url = f"{self.root}/stories/{post['user']['username']}/"
+                expires = post["seen"] + 86400
+                reel_type = "story"
             data = {
                 "user"   : post.get("user"),
                 "expires": self.parse_timestamp(expires),
                 "post_id": reel_id,
                 "post_shortcode": shortcode_from_id(reel_id),
                 "post_url": post_url,
-                "type": "story" if expires else "highlight",
+                "type": reel_type,
             }
-            if "title" in post:
-                data["highlight_title"] = post["title"]
-            if expires and not post.get("seen"):
-                post["seen"] = expires - 86400
+            if title := post.get("title"):
+                data["highlight_title"] = title
+            if not post.get("seen"):
+                post["seen"] = post.get("latest_reel_media")
+            if self._highlight_covers and (cover := post.get("cover_media")):
+                if img := (cover.get("full_image_version") or
+                           cover.get("cropped_image_version")):
+                    img = img.copy()
+                    img.setdefault("width", 0)
+                    img.setdefault("height", 0)
+                    items.insert(0, {
+                        "pk": f"{reel_id}_cover",
+                        "code": reel_id,
+                        "taken_at": post["seen"],
+                        "image_versions2": {"candidates": (img,)}})
 
         else:  # regular image/video post
             data = {
@@ -232,11 +260,15 @@ class InstagramExtractor(Extractor):
                 data["tags"] = sorted(set(tags))
 
             if location := post.get("location"):
-                slug = location["short_name"].replace(" ", "-").lower()
-                data["location_id"] = location["pk"]
-                data["location_slug"] = slug
-                data["location_url"] = \
-                    f"{self.root}/explore/locations/{location['pk']}/{slug}/"
+                data["location_id"] = location_id = (
+                    location.get("pk") or location.get("id"))
+                data["location_name"] = name = (
+                    location.get("name") or "")
+                data["location_slug"] = slug = (
+                    location.get("short_name") or name).replace(
+                    " ", "-").lower()
+                data["location_url"] = (
+                    f"{self.root}/explore/locations/{location_id}/{slug}/")
 
             if coauthors := post.get("coauthor_producers"):
                 data["coauthors"] = [
@@ -279,12 +311,7 @@ class InstagramExtractor(Extractor):
             height_orig = item.get("original_height", 0)
 
             if video_versions := item.get("video_versions"):
-                video = max(
-                    video_versions,
-                    key=lambda x: (x["width"], x["height"], x["type"]),
-                )
-
-                media = video
+                media = video = video_versions[-1]
                 if (manifest := item.get("video_dash_manifest")) and \
                         self.videos_dash:
                     width = width_orig
@@ -359,6 +386,16 @@ class InstagramExtractor(Extractor):
             try:
                 if audio := self._extract_audio(
                         post, data, metadata.get("music_info")):
+                    num += 1
+                    audio["num"] = num
+                    files.append(audio)
+            except Exception as exc:
+                self.log.traceback(exc)
+
+        if clips := post.get("clips_metadata"):
+            try:
+                if audio := self._extract_audio(post, data, clips):
+                    num += 1
                     audio["num"] = num
                     files.append(audio)
             except Exception as exc:
@@ -373,93 +410,6 @@ class InstagramExtractor(Extractor):
             else:
                 data["type"] = "post"
                 data["post_url"] = f"{self.root}/p/{post['code']}/"
-
-        return data
-
-    def _parse_post_graphql(self, post):
-        typename = post["__typename"]
-
-        if self._logged_in:
-            if post.get("is_video") and "video_url" not in post:
-                post = self.api.media(post["id"])[0]
-            elif typename == "GraphSidecar" and \
-                    "edge_sidecar_to_children" not in post:
-                post = self.api.media(post["id"])[0]
-
-        if pinned := post.get("pinned_for_users", ()):
-            for index, user in enumerate(pinned):
-                pinned[index] = int(user["id"])
-
-        owner = post["owner"]
-        data = {
-            "typename"   : typename,
-            "likes"      : post["edge_media_preview_like"]["count"],
-            "liked"      : post.get("viewer_has_liked", False),
-            "pinned"     : pinned,
-            "owner_id"   : owner["id"],
-            "username"   : owner.get("username"),
-            "fullname"   : owner.get("full_name"),
-            "post_id"    : post["id"],
-            "post_shortcode": post["shortcode"],
-            "post_url"   : f"{self.root}/p/{post['shortcode']}/",
-            "post_date"  : self.parse_timestamp(post["taken_at_timestamp"]),
-            "description": text.parse_unicode_escapes("\n".join(
-                edge["node"]["text"]
-                for edge in post["edge_media_to_caption"]["edges"]
-            )),
-        }
-        data["date"] = data["post_date"]
-
-        if tags := self._find_tags(data["description"]):
-            data["tags"] = sorted(set(tags))
-
-        if location := post.get("location"):
-            data["location_id"] = location["id"]
-            data["location_slug"] = location["slug"]
-            data["location_url"] = (f"{self.root}/explore/locations/"
-                                    f"{location['id']}/{location['slug']}/")
-
-        if coauthors := post.get("coauthor_producers"):
-            data["coauthors"] = [
-                {"id"      : user["id"],
-                 "username": user["username"]}
-                for user in coauthors
-            ]
-
-        data["_files"] = files = []
-        if "edge_sidecar_to_children" in post:
-            for num, edge in enumerate(
-                    post["edge_sidecar_to_children"]["edges"], 1):
-                node = edge["node"]
-                dimensions = node["dimensions"]
-                media = {
-                    "num": num,
-                    "media_id"   : node["id"],
-                    "date"       : data["date"],
-                    "shortcode"  : (node.get("shortcode") or
-                                    shortcode_from_id(node["id"])),
-                    "display_url": node["display_url"],
-                    "video_url"  : node.get("video_url"),
-                    "width"      : dimensions["width"],
-                    "height"     : dimensions["height"],
-                    "sidecar_media_id" : post["id"],
-                    "sidecar_shortcode": post["shortcode"],
-                }
-                self._extract_tagged_users(node, media)
-                files.append(media)
-        else:
-            dimensions = post["dimensions"]
-            media = {
-                "media_id"   : post["id"],
-                "date"       : data["date"],
-                "shortcode"  : post["shortcode"],
-                "display_url": post["display_url"],
-                "video_url"  : post.get("video_url"),
-                "width"      : dimensions["width"],
-                "height"     : dimensions["height"],
-            }
-            self._extract_tagged_users(post, media)
-            files.append(media)
 
         return data
 
@@ -489,39 +439,59 @@ class InstagramExtractor(Extractor):
 
         if stickers := src.get("story_bloks_stickers"):
             for sticker in stickers:
-                sticker = sticker["bloks_sticker"]
-                if sticker["bloks_sticker_type"] == "mention":
-                    user = sticker["sticker_data"]["ig_mention"]
-                    tagged_users.append({"id"       : user["account_id"],
-                                         "username" : user["username"],
-                                         "full_name": user["full_name"]})
+                try:
+                    user = (sticker["bloks_sticker"]
+                            ["sticker_data"]["ig_mention"])
+                    tagged_users.append({"id"       : user.get("account_id"),
+                                         "username" : user.get("username"),
+                                         "full_name": user.get("full_name")})
+                except Exception:
+                    pass
+
+    def _is_reel(self, post):
+        product_type = post.get("product_type") or post.get(
+            "media_product_type")
+        return (
+            product_type == "clips" or
+            post.get("subtype_name_for_REST__") == "XDTClipsMedia" or
+            "clips_metadata" in post
+        )
 
     def _extract_pinned(self, post):
         return (post.get("timeline_pinned_user_ids") or
                 post.get("clips_tab_pinned_user_ids") or ())
 
     def _extract_audio(self, src, dest, info):
-        if not info or not (audio := info.get("music_asset_info")):
+        if not info or not (audio := info.get("music_asset_info") or
+                            info.get("original_sound_info")):
             return None
         cinfo = info.get("music_consumption_info") or audio
 
-        dest["audio_title"] = title = audio.get("title")
+        dest["audio_title"] = title = audio.get("title") or audio.get(
+            "original_audio_title")
         dest["audio_duration"] = duration = audio.get(
             "duration_in_ms", 0) / 1000
-        dest["audio_timestamps"] = timestamps = audio.get(
-            "highlight_start_times_in_ms")
-        dest["audio_artist"] = artist = audio.get(
-            "display_artist") or cinfo.get("display_artist")
         dest["audio_user"] = user = audio.get(
             "ig_artist") or cinfo.get("ig_artist")
 
-        if not (url := audio["progressive_download_url"]):
+        if parts := audio.get("audio_parts"):
+            artist = [a for p in parts if (a := p.get("display_artist"))]
+            timestamps = [p.get("parent_start_time_in_ms") for p in parts]
+        else:
+            artist = audio.get("display_artist") or cinfo.get("display_artist")
+            timestamps = audio.get("highlight_start_times_in_ms")
+        dest["audio_artist"] = artist
+        dest["audio_timestamps"] = timestamps
+
+        if not (url := audio.get("progressive_download_url")):
             return None
-        return {
+        audio_id = audio.get("id") or audio.get("audio_asset_id") or 0
+
+        file = {
             "date"       : self.parse_timestamp(src.get("taken_at")),
-            "media_id"   : audio["id"],
-            "shortcode"  : shortcode_from_id(audio["id"]),
-            "display_url": audio["cover_artwork_uri"],
+            "media_id"   : audio_id,
+            "shortcode"  : shortcode_from_id(audio_id),
+            "display_url": audio.get("cover_artwork_uri"),
             "audio_url"  : url,
             "width"           : 0,
             "width_original"  : 0,
@@ -533,6 +503,10 @@ class InstagramExtractor(Extractor):
             "audio_duration"  : duration,
             "audio_timestamps": timestamps,
         }
+
+        if manifest := audio.get("dash_manifest"):
+            file["_ytdl_manifest_data"] = manifest
+        return file
 
     def _init_cursor(self):
         cursor = self.config("cursor", True)
@@ -563,6 +537,8 @@ class InstagramExtractor(Extractor):
                 user[key] = user.pop(old)["count"]
             except Exception:
                 user[key] = 0
+
+        return user
 
 
 class InstagramPostExtractor(InstagramExtractor):
@@ -607,6 +583,7 @@ class InstagramUserExtractor(Dispatch, InstagramExtractor):
             (InstagramStoriesExtractor   , stories),
             (InstagramHighlightsExtractor, base + "highlights/"),
             (InstagramPostsExtractor     , base + "posts/"),
+            (InstagramPhotosExtractor    , base + "photos/"),
             (InstagramReelsExtractor     , base + "reels/"),
             (InstagramTaggedExtractor    , base + "tagged/"),
         ), ("posts",))
@@ -619,14 +596,25 @@ class InstagramPostsExtractor(InstagramExtractor):
     example = "https://www.instagram.com/USER/posts/"
 
     def posts(self):
-        uid = self.api.user_id(self.item)
-        return self.api.user_feed(uid)
+        return self.api.user_feed(self.item)
 
     def _extract_pinned(self, post):
         try:
             return post["timeline_pinned_user_ids"]
         except KeyError:
             return ()
+
+
+class InstagramPhotosExtractor(InstagramExtractor):
+    """Extractor for an Instagram user's photos"""
+    subcategory = "photos"
+    pattern = USER_PATTERN + r"/photos"
+    example = "https://www.instagram.com/USER/photos/"
+
+    def posts(self):
+        for post in self.api.user_feed(self.item):
+            if not self._is_reel(post):
+                yield post
 
 
 class InstagramReelsExtractor(InstagramExtractor):
@@ -636,8 +624,8 @@ class InstagramReelsExtractor(InstagramExtractor):
     example = "https://www.instagram.com/USER/reels/"
 
     def posts(self):
-        uid = self.api.user_id(self.item)
-        return self.api.user_clips(uid)
+        for reel in self.api.user_reels(self.item):
+            yield from self.api.media(reel["media"]["code"])
 
     def _extract_pinned(self, post):
         try:
@@ -653,40 +641,16 @@ class InstagramTaggedExtractor(InstagramExtractor):
     example = "https://www.instagram.com/USER/tagged/"
 
     def metadata(self):
-        if self.item.startswith("id:"):
-            self.user_id = self.item[3:]
-            if not self.config("metadata"):
-                return {"tagged_owner_id": self.user_id}
-            user = self.api.user_by_id(self.user_id)
-        else:
-            self.user_id = self.api.user_id(self.item)
-            user = self.api.user_by_screen_name(self.item)
-
+        user = self.api.user(self.item)
         return {
             "tagged_owner_id" : user["id"],
             "tagged_username" : user["username"],
-            "tagged_full_name": user["full_name"],
+            "tagged_full_name": user.get("full_name"),
         }
 
     def posts(self):
-        return self.api.user_tagged(self.user_id)
-
-
-class InstagramGuideExtractor(InstagramExtractor):
-    """Extractor for an Instagram guide"""
-    subcategory = "guide"
-    pattern = USER_PATTERN + r"/guide/[^/?#]+/(\d+)"
-    example = "https://www.instagram.com/USER/guide/NAME/12345"
-
-    def __init__(self, match):
-        InstagramExtractor.__init__(self, match)
-        self.guide_id = match[2]
-
-    def metadata(self):
-        return {"guide": self.api.guide(self.guide_id)}
-
-    def posts(self):
-        return self.api.guide_media(self.guide_id)
+        for post in self.api.user_tagged(self.item):
+            yield from self.api.media(post["code"])
 
 
 class InstagramSavedExtractor(InstagramExtractor):
@@ -748,15 +712,14 @@ class InstagramStoriesExtractor(InstagramExtractor):
             self.highlight_id = None
         else:
             self.subcategory = InstagramHighlightsExtractor.subcategory
-            self.highlight_id = ("highlight:" + h1 if h1 else
-                                 binascii.a2b_base64(h2).decode())
+            self.highlight_id = "highlight:" + h1 if h1 else util.b64decode(h2)
 
         self.media_id = m1 or m2
         InstagramExtractor.__init__(self, match)
 
     def posts(self):
-        reel_id = self.highlight_id or self.api.user_id(self.user)
-        reels = self.api.reels_media(reel_id)
+        reel_id = self.highlight_id or self.api.user(self.user)["id"]
+        reels = list(self.api.reels_media((reel_id,)))
 
         if not reels:
             return ()
@@ -790,8 +753,7 @@ class InstagramHighlightsExtractor(InstagramExtractor):
     example = "https://www.instagram.com/USER/highlights/"
 
     def posts(self):
-        uid = self.api.user_id(self.item)
-        return self.api.highlights_media(uid)
+        return self.api.highlights_media(self.item)
 
 
 class InstagramFollowersExtractor(InstagramExtractor):
@@ -801,7 +763,7 @@ class InstagramFollowersExtractor(InstagramExtractor):
     example = "https://www.instagram.com/USER/followers/"
 
     def items(self):
-        uid = self.api.user_id(self.item)
+        uid = self.api.user(self.item)["id"]
         for user in self.api.user_followers(uid):
             user["_extractor"] = InstagramUserExtractor
             url = f"{self.root}/{user['username']}"
@@ -815,7 +777,7 @@ class InstagramFollowingExtractor(InstagramExtractor):
     example = "https://www.instagram.com/USER/following/"
 
     def items(self):
-        uid = self.api.user_id(self.item)
+        uid = self.api.user(self.item)["id"]
         for user in self.api.user_following(uid):
             user["_extractor"] = InstagramUserExtractor
             url = f"{self.root}/{user['username']}"
@@ -843,13 +805,8 @@ class InstagramInfoExtractor(InstagramExtractor):
     example = "https://www.instagram.com/USER/info/"
 
     def items(self):
-        screen_name = self.item
-        if screen_name.startswith("id:"):
-            user = self.api.user_by_id(screen_name[3:])
-        else:
-            user = self.api.user_by_screen_name(screen_name)
-
-        return iter(((Message.Directory, "", user),))
+        user = self.api.user(self.item, check_private=False)
+        return iter(((Message.Directory, "", user.copy()),))
 
 
 class InstagramAvatarExtractor(InstagramExtractor):
@@ -859,24 +816,17 @@ class InstagramAvatarExtractor(InstagramExtractor):
     example = "https://www.instagram.com/USER/avatar/"
 
     def posts(self):
-        if self._logged_in:
-            user_id = self.api.user_id(self.item, check_private=False)
-            user = self.api.user_by_id(user_id)
-            avatar = (user.get("hd_profile_pic_url_info") or
-                      user["hd_profile_pic_versions"][-1])
-        else:
-            user = self.item
-            if user.startswith("id:"):
-                user = self.api.user_by_id(user[3:])
-            else:
-                user = self.api.user_by_screen_name(user)
-                user["pk"] = user["id"]
-            url = user.get("profile_pic_url_hd") or user["profile_pic_url"]
-            avatar = {"url": url, "width": 0, "height": 0}
+        user = self.api.user(self.item, check_private=False)
+        avatar = (user.get("hd_profile_pic_url_info") or
+                  user["hd_profile_pic_versions"][-1])
+        avatar.setdefault("width", 0)
+        avatar.setdefault("height", 0)
 
         if pk := user.get("profile_pic_id"):
             pk = pk.partition("_")[0]
             code = shortcode_from_id(pk)
+        elif pk := text.rextr(avatar["url"], "/", "_n."):
+            code = pk
         else:
             pk = code = "avatar:" + str(user["pk"])
 
@@ -890,14 +840,20 @@ class InstagramAvatarExtractor(InstagramExtractor):
         },)
 
 
-class InstagramRestAPI():
+class InstagramAPI():
 
     def __init__(self, extractor):
         self.extractor = extractor
         self.exc = extractor.exc
 
         _cache = self.extractor.config("user-cache", True)
-        self._user_cache = True if not _cache or _cache == "memory" else False
+        if not _cache or _cache == "memory":
+            self._user_cache_mem = True
+            self._user_cache_exp = 0
+        else:
+            self._user_cache_mem = False
+            self._user_cache_exp = (text.parse_int(_cache.partition(":")[2])
+                                    if isinstance(_cache, str) else 0)
 
         if strategy := self.extractor.config("user-strategy"):
             if isinstance(strategy, str):
@@ -906,17 +862,8 @@ class InstagramRestAPI():
         else:
             self._strategy_uid = ("search", "web")
 
-    def guide(self, guide_id):
-        endpoint = "/v1/guides/web_info/"
-        params = {"guide_id": guide_id}
-        return self._call(endpoint, params=params)
-
-    def guide_media(self, guide_id):
-        endpoint = f"/v1/guides/guide/{guide_id}/"
-        return self._pagination_guides(endpoint)
-
-    def highlights_media(self, user_id, chunk_size=5):
-        reel_ids = [hl["id"] for hl in self.highlights_tray(user_id)]
+    def highlights_media(self, handle, chunk_size=5):
+        reel_ids = [hl["id"] for hl in self.highlights_tray(handle)]
 
         if order := self.extractor.config("order-posts"):
             if order in {"desc", "reverse"}:
@@ -932,7 +879,18 @@ class InstagramRestAPI():
             yield from self.reels_media(
                 reel_ids[offset : offset+chunk_size])
 
-    def highlights_tray(self, user_id):
+    def highlights_tray(self, handle):
+        user = self.user(handle)
+        variables = {"user_id": str(user["id"])}
+
+        return self._pagination_graphql(
+            "PolarisProfileStoryHighlightsTrayContentQuery",
+            "highlights",
+            "",
+            "26970053832668570",
+            variables)
+
+    def highlights_tray_legacy(self, user_id):
         endpoint = f"/v1/highlights/{user_id}/highlights_tray/"
         return self._call(endpoint)["tray"]
 
@@ -943,6 +901,23 @@ class InstagramRestAPI():
         return self._pagination(endpoint)
 
     def reels_media(self, reel_ids):
+        variables = {
+            "initial_reel_id": reel_ids[0],
+            "reel_ids"       : reel_ids,
+            "first": 3,
+            "last" : 2,
+            "__relay_internal__pv__"
+            "PolarisCommunityNoteStoriesLabelEnabledrelayprovider": True,
+        }
+
+        return self._pagination_graphql(
+            "PolarisStoriesV3HighlightsPageQuery",
+            "xdt_api__v1__feed__reels_media__connection",
+            "",
+            "28325328583775973",
+            variables)
+
+    def reels_media_legacy(self, reel_ids):
         endpoint = "/v1/feed/reels_media/"
         params = {"reel_ids": reel_ids}
         try:
@@ -972,18 +947,48 @@ class InstagramRestAPI():
 
     def user_by_id(self, user_id):
         return self.extractor.cache(
-            self._user_by_id_impl, user_id, _mem=self._user_cache)
+            self._user_by_id_impl, user_id,
+            _exp=self._user_cache_exp, _mem=self._user_cache_mem)
 
     def _user_by_id_impl(self, user_id):
+        opname = "PolarisProfilePageContentQuery"
+        variables = {
+            "enable_integrity_filters": True,
+            "id"                      : user_id,
+            "__relay_internal__pv__"
+            "PolarisCannesGuardianExperienceEnabledrelayprovider": True,
+            "__relay_internal__pv__"
+            "PolarisCASB976ProfileEnabledrelayprovider": False,
+            "__relay_internal__pv__"
+            "PolarisWebSchoolsEnabledrelayprovider": False,
+            "__relay_internal__pv__"
+            "PolarisRepostsConsumptionEnabledrelayprovider": True,
+            "__relay_internal__pv__"
+            "PolarisShortDramaEnabledrelayprovider": True,
+        }
+
+        try:
+            return self._call_graphql(
+                opname, variables, "28036671149327607",
+                notfound="user")["user"]
+        except self.exc.ControlException:
+            raise
+        except Exception:
+            raise self.exc.NotFoundError("user")
+
+    def _user_by_id_impl_legacy(self, user_id):
         endpoint = f"/v1/users/{user_id}/info/"
         try:
             return self._call(endpoint, notfound="user")["user"]
+        except self.exc.ControlException:
+            raise
         except Exception:
             raise self.exc.NotFoundError("user")
 
     def user_by_name(self, username):
         return self.extractor.cache(
-            self._user_by_name_impl, username, _mem=self._user_cache)
+            self._user_by_name_impl, username,
+            _exp=self._user_cache_exp, _mem=self._user_cache_mem)
 
     def _user_by_name_impl(self, username):
         endpoint = "/v1/users/web_profile_info/"
@@ -991,12 +996,15 @@ class InstagramRestAPI():
         try:
             return self._call(
                 endpoint, params=params, notfound="user")["data"]["user"]
+        except self.exc.ControlException:
+            raise
         except Exception:
             raise self.exc.NotFoundError("user")
 
     def user_by_search(self, username):
         return self.extractor.cache(
-            self._user_by_search_impl, username, _mem=self._user_cache)
+            self._user_by_search_impl, username,
+            _exp=self._user_cache_exp, _mem=self._user_cache_mem)
 
     def _user_by_search_impl(self, username):
         url = "https://www.instagram.com/web/search/topsearch/"
@@ -1008,35 +1016,29 @@ class InstagramRestAPI():
                 user = result["user"]
                 if user["username"].lower() == name:
                     return user
+        except self.exc.ControlException:
+            raise
         except Exception:
             pass
         raise self.exc.NotFoundError("user")
 
     def user_by_web(self, username):
         return self.extractor.cache(
-            self._user_by_web_impl, username, _mem=self._user_cache)
+            self._user_by_web_impl, username,
+            _exp=self._user_cache_exp, _mem=self._user_cache_mem)
 
     def _user_by_web_impl(self, username):
-        url = "https://www.instagram.com/" + username
-
         try:
-            headers = {
-                "Accept": "text/html,application/xhtml+xml,"
-                          "application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate, br, zstd",
-                "Alt-Used": "www.instagram.com",
-                "Connection": "keep-alive",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Priority": "u=0, i",
-            }
-            page = self.extractor.request(url, headers=headers).text
-            if uid := text.extr(page, '"profile_id":"', '"'):
-                return {"id": uid}
+            page = self.extractor.cache(self._webpage, "/" + username)
+            user = {}
+            if user_id := text.extr(page, '"profile_id":"', '"'):
+                user["id"] = user_id
+            if username := text.extr(page, '"username":"', '"'):
+                user["username"] = username
         except Exception:
             pass
+        if user:
+            return user
         raise self.exc.NotFoundError("user")
 
     def user_by_screen_name(self, screen_name):
@@ -1054,41 +1056,83 @@ class InstagramRestAPI():
                 self.extractor.log.debug("Failed to get user via %r", strategy)
         raise self.exc.NotFoundError("user")
 
-    def user_id(self, screen_name, check_private=True):
+    def user(self, screen_name, check_private=True):
         if screen_name.startswith("id:"):
-            if self.extractor.config("metadata"):
-                self.extractor._user = self.user_by_id(screen_name[3:])
-            return screen_name[3:]
+            user_id = screen_name[3:]
+        else:
+            user = self.user_by_web(screen_name)
+            user_id = self.extractor._assign_user(user)["id"]
+        user = self.user_by_id(user_id)
 
-        user = self.user_by_screen_name(screen_name)
-        if check_private and user.get("is_private") and \
-                not user.get("followed_by_viewer", True):
+        if check_private and user.get("is_private") and (
+                not user.get("followed_by_viewer", True) or
+                not user.get("friendship_status", {}).get("following", True)):
             name = user["username"]
             s = "" if name.endswith("s") else "s"
             self.extractor.log.warning("%s'%s posts are private", name, s)
 
-        self.extractor._assign_user(user)
-        return user["id"]
-
-    def user_clips(self, user_id):
-        endpoint = "/v1/clips/user/"
-        data = {
-            "target_user_id": user_id,
-            "page_size": "50",
-            "max_id": None,
-            "include_feed_video": "true",
-        }
-        return self._pagination_post(endpoint, data)
+        return self.extractor._assign_user(user)
 
     def user_collection(self, collection_id):
         endpoint = f"/v1/feed/collection/{collection_id}/posts/"
         params = {"count": 50}
         return self._pagination(endpoint, params, media=True)
 
-    def user_feed(self, user_id):
-        endpoint = f"/v1/feed/user/{user_id}/"
-        params = {"count": 30}
-        return self._pagination(endpoint, params)
+    def user_feed(self, handle):
+        username = self.user(handle)["username"]
+
+        variables = {
+            "after" : None,
+            "before": None,
+            "data": {
+                "count": 12,
+                "include_reel_media_seen_timestamp": True,
+                "include_relationship_info": True,
+                "latest_besties_reel_media": True,
+                "latest_reel_media": True,
+            },
+            "first": 12,
+            "include_multi_captions": True,
+            "last": None,
+            "username": username,
+            "__relay_internal__pv__"
+            "PolarisMultiCaptionCarouselEnabledrelayprovider": True,
+            "__relay_internal__pv__"
+            "PolarisShortDramaEnabledrelayprovider": False,
+            "__relay_internal__pv__"
+            "PolarisReelsRecoDebugOverlayEnabledrelayprovider": False,
+        }
+
+        return self._pagination_graphql(
+            "PolarisProfilePostsTabContentQuery_connection",
+            "xdt_api__v1__feed__user_timeline_graphql_connection",
+            "",
+            "28975909992013618",
+            variables)
+
+    def user_reels(self, handle):
+        user = self.user(handle)
+        user_id = str(user["id"])
+
+        variables = {
+            "after": "",
+            "data" : {
+                "include_feed_video": True,
+                "page_size": 12,
+                "target_user_id": user_id,
+            },
+            "first": 12,
+            "id": user_id,
+            "__relay_internal__pv__"
+            "PolarisShortDramaEnabledrelayprovider": False,
+        }
+
+        return self._pagination_graphql(
+            "PolarisProfileReelsTabContentQuery_connection",
+            "fetch__XDTUserDict",
+            "reels",
+            "28647575511547745",
+            variables)
 
     def user_followers(self, user_id):
         endpoint = f"/v1/friendships/{user_id}/followers/"
@@ -1105,10 +1149,92 @@ class InstagramRestAPI():
         params = {"count": 50}
         return self._pagination(endpoint, params, media=True)
 
-    def user_tagged(self, user_id):
+    def user_tagged(self, handle):
+        variables = {
+            "after"  : None,
+            "before" : None,
+            "count"  : 12,
+            "first"  : 12,
+            "last"   : None,
+            "user_id": str(self.user(handle)["id"]),
+            "__relay_internal__pv__"
+            "PolarisShortDramaEnabledrelayprovider": True,
+        }
+
+        return self._pagination_graphql(
+            "PolarisProfileTaggedTabContentQuery_connection",
+            "xdt_api__v1__usertags__user_id__feed_connection",
+            "tagged",
+            "28412176455057653",
+            variables)
+
+    def user_tagged_legacy(self, user_id):
         endpoint = f"/v1/usertags/{user_id}/feed/"
         params = {"count": 20}
         return self._pagination(endpoint, params)
+
+    def _extract_fb_tokens(self, path):
+        extr = self.extractor
+        lsd = extr.config("lsd")
+        dtsg = extr.config("fb-dtsg")
+        if lsd and dtsg:
+            extr.log.debug("Using 'config' GraphQL tokens")
+            return lsd, dtsg
+
+        extr.log.debug("Extracting GraphQL tokens")
+        page = extr.cache(self._webpage, path)
+        pos = page.find(' id="__eqmc"')
+        eqmc = util.json_loads(
+            page[page.find(">", pos)+1:page.find("</script>", pos)])
+        if not lsd:
+            lsd = (eqmc.get("l") or
+                   text.extr(page, '"lsd":"', '"') or
+                   text.extr(page, '"LSD",[],{"token":"', '"'))
+        if not dtsg:
+            dtsg = (eqmc.get("f") or
+                    text.extr(page, '"dtsg":{"token":"', '"'))
+        extr.log.debug("Found 'lsd=%s' & 'fb_dtsg=%s'", lsd, dtsg)
+        return lsd, dtsg
+
+    def _extract_docid(self, path, opname):
+        extr = self.extractor
+        if doc_id := extr.config("doc-id"):
+            extr.log.debug("Using 'config' doc_id value")
+            return doc_id
+
+        extr.log.debug("Extracting '%s' doc_id value", opname)
+        needle = opname + "_instagramRelayOperation"
+        doc_id = ""
+        for path in util.unique(text.extract_iter(
+                extr.cache(self._webpage, path),
+                'href="https://static.cdninstagram.com/rsrc.php/', '"')):
+            if not path.endswith(".js"):
+                continue
+            url = "https://static.cdninstagram.com/rsrc.php/" + path
+            script = extr.request(url, interval=False).text
+            if (pos := script.find(needle)) < 0:
+                continue
+            if match := text.re(
+                    r'exports\s*=\s*["\']?(\d{10,20})').search(
+                    script, pos, pos+1000):
+                doc_id = match[1]
+                break
+        extr.log.debug("Found 'doc_id=%s'", doc_id)
+        return doc_id
+
+    def _webpage(self, path):
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                      "image/avif,image/webp,image/apng,*/*;q=0.8,"
+                      "application/signed-exchange;v=b3;q=0.7",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-User": "?1",
+            "Sec-Fetch-Dest": "document",
+        }
+        extr = self.extractor
+        return extr.request(f"{extr.root}{path}/", headers=headers,
+                            interval=False).text
 
     def _call(self, endpoint, **kwargs):
         extr = self.extractor
@@ -1121,16 +1247,57 @@ class InstagramRestAPI():
             "Accept"          : "*/*",
             "X-CSRFToken"     : extr.csrf_token,
             "X-IG-App-ID"     : "936619743392459",
-            "X-ASBD-ID"       : "129477",
+            "X-ASBD-ID"       : "359341",
             "X-IG-WWW-Claim"  : extr.www_claim,
+            "X-IG-Max-Touch-Points": "0",
             "X-Requested-With": "XMLHttpRequest",
-            "Connection"      : "keep-alive",
-            "Referer"         : extr.root + "/",
-            "Sec-Fetch-Dest"  : "empty",
-            "Sec-Fetch-Mode"  : "cors",
-            "Sec-Fetch-Site"  : "same-origin",
         }
         return extr.request_json(url, **kwargs)
+
+    def _call_graphql(self, opname, variables, doc_id, **kwargs):
+        extr = self.extractor
+        path = ("/" + extr._user["username"]) if extr._user else ""
+        url = extr.root + "/api/graphql"
+
+        fb_lsd, fb_dtsg = self._extract_fb_tokens(path)
+        doc_id = extr.cache(self._extract_docid, path, opname,
+                            _key=1, _exp=86400, _mem=False) or doc_id
+
+        kwargs["method"] = "POST"
+        kwargs["headers"] = {
+            "Accept"            : "*/*",
+            "Content-Type"      : "application/x-www-form-urlencoded",
+            "X-FB-Friendly-Name": opname,
+            "X-CSRFToken"       : extr.csrf_token,
+            "X-IG-App-ID"       : "936619743392459",
+            "X-IG-Max-Touch-Points": "0",
+            "X-FB-LSD"          : fb_lsd,
+            "X-ASBD-ID"         : "359341",
+            "Referer"           : extr.root + path,
+        }
+        kwargs["data"] = {
+            "av"    : "17841415137994167",
+            "__d"   : "www",
+            "__user": "0",
+            "__a"   : "1",
+            "__req" : "0",
+            "__hs"  : "20730.HYP%3Ainstagram_web_pkg.2.1...0",
+            "dpr"   : "1",
+            "__ccg" : "EXCELLENT",
+            "__rev" : "1049238852",
+            "__hsi" : "7692718682705400934",
+            "__comet_req": "7",
+            "fb_dtsg"  : fb_dtsg,
+            "jazoest"  : "26461",
+            "lsd"      : fb_lsd,
+            "fb_api_caller_class": "RelayModern",
+            "fb_api_req_friendly_name": opname,
+            "server_timestamps": "true",
+            "variables": util.json_dumps(variables),
+            "doc_id"   : doc_id,
+        }
+
+        return extr.request_json(url, **kwargs)["data"]
 
     def _pagination(self, endpoint, params=None, media=False):
         if params is None:
@@ -1180,21 +1347,6 @@ class InstagramRestAPI():
             params["page"] = info["next_page"]
             params["max_id"] = extr._update_cursor(info["next_max_id"])
 
-    def _pagination_guides(self, endpoint):
-        extr = self.extractor
-        params = {"max_id": extr._init_cursor()}
-
-        while True:
-            data = self._call(endpoint, params=params)
-
-            for item in data["items"]:
-                yield from item["media_items"]
-
-            next_max_id = data.get("next_max_id")
-            if not next_max_id:
-                return extr._update_cursor(None)
-            params["max_id"] = extr._update_cursor(next_max_id)
-
     def _pagination_following(self, endpoint, params):
         extr = self.extractor
         params["max_id"] = text.parse_int(extr._init_cursor())
@@ -1209,114 +1361,98 @@ class InstagramRestAPI():
                 return extr._update_cursor(None)
             params["max_id"] = extr._update_cursor(next_max_id)
 
-
-class InstagramGraphqlAPI():
-
-    def __init__(self, extractor):
-        self.extractor = extractor
-        self.user_collection = self.user_saved = self.reels_media = \
-            self.highlights_media = self.guide = self.guide_media = \
-            self._unsupported
-        self._json_dumps = util.json_dumps
-
-        api = InstagramRestAPI(extractor)
-        self.user_by_screen_name = api.user_by_screen_name
-        self.user_by_id = api.user_by_id
-        self.user_id = api.user_id
-
-    def _unsupported(self, _=None):
-        raise self.extractor.exc.AbortExtraction(
-            "Unsupported with GraphQL API")
-
-    def highlights_tray(self, user_id):
-        query_hash = "d4d88dc1500312af6f937f7b804c68c3"
-        variables = {
-            "user_id": user_id,
-            "include_chaining": False,
-            "include_reel": False,
-            "include_suggested_users": False,
-            "include_logged_out_extras": True,
-            "include_highlight_reels": True,
-            "include_live_status": False,
-        }
-        edges = (self._call(query_hash, variables)["user"]
-                 ["edge_highlight_reels"]["edges"])
-        return [edge["node"] for edge in edges]
-
-    def media(self, shortcode):
-        query_hash = "9f8827793ef34641b2fb195d4d41151c"
-        variables = {
-            "shortcode": shortcode,
-            "child_comment_count": 3,
-            "fetch_comment_count": 40,
-            "parent_comment_count": 24,
-            "has_threaded_comments": True,
-        }
-        media = self._call(query_hash, variables).get("shortcode_media")
-        return (media,) if media else ()
-
-    def tags_media(self, tag):
-        query_hash = "9b498c08113f1e09617a1703c22b2f32"
-        variables = {"tag_name": text.unescape(tag), "first": 24}
-        return self._pagination(query_hash, variables,
-                                "hashtag", "edge_hashtag_to_media")
-
-    def user_clips(self, user_id):
-        query_hash = "bc78b344a68ed16dd5d7f264681c4c76"
-        variables = {"id": user_id, "first": 24}
-        return self._pagination(query_hash, variables)
-
-    def user_feed(self, user_id):
-        query_hash = "69cba40317214236af40e7efa697781d"
-        variables = {"id": user_id, "first": 24}
-        return self._pagination(query_hash, variables)
-
-    def user_tagged(self, user_id):
-        query_hash = "be13233562af2d229b008d2976b998b5"
-        variables = {"id": user_id, "first": 24}
-        return self._pagination(query_hash, variables)
-
-    def _call(self, query_hash, variables):
+    def _pagination_graphql(self, opname, fieldname, path, doc_id, variables):
         extr = self.extractor
+        root = extr.root
+        url = root + "/graphql/query"
 
-        url = "https://www.instagram.com/graphql/query/"
-        params = {
-            "query_hash": query_hash,
-            "variables" : self._json_dumps(variables),
-        }
+        if extr._user:
+            name = extr._user["username"]
+            path = f"/{name}/{path}" if path else ("/" + name)
+
+        fb_lsd, fb_dtsg = self._extract_fb_tokens(path)
+        doc_id = extr.cache(self._extract_docid, path, opname,
+                            _key=1, _exp=86400, _mem=False) or doc_id
+
         headers = {
-            "Accept"          : "*/*",
-            "X-CSRFToken"     : extr.csrf_token,
-            "X-Instagram-AJAX": "1006267176",
-            "X-IG-App-ID"     : "936619743392459",
-            "X-ASBD-ID"       : "198387",
-            "X-IG-WWW-Claim"  : extr.www_claim,
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer"         : extr.root + "/",
+            "Accept": "*/*",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-FB-Friendly-Name": opname,
+            "X-CSRFToken": None,
+            "X-IG-App-ID": "936619743392459",
+            "X-IG-Max-Touch-Points": "0",
+            "X-BLOKS-VERSION-ID": "62077fc559de123afe03ebeb18194a88"
+                                  "ba5d4e6874d9a07873752f3792adb8a0",
+            "X-Root-Field-Name": fieldname,
+            "X-FB-LSD": fb_lsd,
+            "X-ASBD-ID": "359341",
+            "Origin" : root,
+            "Alt-Used": root[8:],
+            "Connection": "keep-alive",
+            "Referer": f"{root}{path}/",
+            "Cookie": None,
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
         }
-        return extr.request_json(url, params=params, headers=headers)["data"]
+        body = {
+            "av"    : "17841415137994167",
+            "__d"   : "www",
+            "__user": "0",
+            "__a"   : "1",
+            "__req" : "0",
+            "__hs"  : "20706.HYP%3Ainstagram_web_pkg.2.1...0",
+            "dpr"   : "1",
+            "__ccg" : "EXCELLENT",
+            "__rev" : "1047183312",
+            #  "__s"   : "...",
+            "__hsi" : "7683797502103314933",
+            #  "__dyn" : "...",
+            #  "__csr" : "...",
+            #  "__hsdp": "...",
+            #  "__hblp": "...",
+            #  "__sjsp": "...",
+            "__comet_req": "7",
+            "fb_dtsg"  : fb_dtsg,
+            "jazoest"  : "26461",
+            "lsd"      : fb_lsd,
+            #  "__spin_r" : "1047183312",
+            #  "__spin_b" : "trunk",
+            #  "__spin_t" : "1789023518",
+            "__crn"    : "comet.igweb.PolarisProfilePostsTabRoute",
+            "fb_api_caller_class": "RelayModern",
+            "fb_api_req_friendly_name": opname,
+            "server_timestamps": "true",
+            "variables": None,
+            "doc_id"   : doc_id,
+        }
 
-    def _pagination(self, query_hash, variables,
-                    key_data="user", key_edge=None):
-        extr = self.extractor
         variables["after"] = extr._init_cursor()
-
         while True:
-            data = self._call(query_hash, variables)[key_data]
-            data = data[key_edge] if key_edge else next(iter(data.values()))
+            headers["X-CSRFToken"] = extr.csrf_token
+            body["variables"] = util.json_dumps(variables)
+            response = extr.request(
+                url, method="POST", headers=headers, data=body)
+
+            try:
+                data = util.json_loads(response.text)["data"][fieldname]
+            except (ValueError, KeyError):
+                break
+
+            if "edges" not in data:
+                for value in data.values():
+                    if isinstance(value, dict) and "edges" in value:
+                        data = value
+                        break
+                else:
+                    break
 
             for edge in data["edges"]:
                 yield edge["node"]
 
-            info = data["page_info"]
-            if not info["has_next_page"]:
-                return extr._update_cursor(None)
-            elif not data["edges"]:
-                user = self.extractor.item
-                s = "" if user.endswith("s") else "s"
-                raise self.exc.AbortExtraction(
-                    f"{user}'{s} posts are private")
-
+            info = data.get("page_info")
+            if not info or not info.get("has_next_page"):
+                break
             variables["after"] = extr._update_cursor(info["end_cursor"])
 
 

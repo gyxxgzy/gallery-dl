@@ -26,6 +26,7 @@ class IwaraExtractor(Extractor):
         self.root = "https://www.iwara." + self.groups[0]
         self.api = IwaraAPI(self)
 
+        self.embeds = self.config("embeds", False)
         if fmts := self.config("format"):
             if isinstance(fmts, str):
                 fmts = fmts.replace(" ", "").lower().split(",")
@@ -57,7 +58,7 @@ class IwaraExtractor(Extractor):
             group_info["count"] = len(files)
             yield Message.Directory, "", group_info
             for num, file in enumerate(files, 1):
-                file_info = self.extract_media_info(file, None)
+                file_info = self.extract_media_info(file)
                 file_id = file_info["file_id"]
                 url = (f"https://i.iwara.tv/image/original/"
                        f"{file_id}/{file_id}.{file_info['extension']}")
@@ -68,15 +69,25 @@ class IwaraExtractor(Extractor):
             try:
                 if "video" in video:
                     video = video["video"]
-                if "fileUrl" not in video:
-                    video = self.api.video(video["id"])
-                file_url = video["fileUrl"]
 
-                source = self.extract_video_source(self.api.source(file_url))
-                download_url = source["src"].get("download")
+                if embed := video.get("embedUrl"):
+                    if not self.embeds:
+                        self.log.warning("%s: Skipping embed", video["id"])
+                        continue
+                    download_url = "ytdl:" + embed
+                    info = self.extract_media_info(video)
+                    info["format"] = "embed"
+                else:
+                    if "fileUrl" not in video:
+                        video = self.api.video(video["id"])
 
-                info = self.extract_media_info(video, "file")
-                info["format"] = source.get("name")
+                    source = self.extract_video_source(self.api.source(
+                        video["fileUrl"]))
+                    download_url = "https:" + source["src"].get("download")
+
+                    info = self.extract_media_info(video, "file")
+                    info["format"] = source.get("name")
+                    info["_fallback"] = self._fallback_video(download_url)
                 info["count"] = info["num"] = 1
                 info["user"] = (self.extract_user_info(video)
                                 if user is None else user)
@@ -88,7 +99,14 @@ class IwaraExtractor(Extractor):
                 continue
 
             yield Message.Directory, "", info
-            yield Message.Url, "https:" + download_url, info
+            yield Message.Url, download_url, info
+
+    def _fallback_video(self, url):
+        sub, sep, url = url[5:].partition(".")
+        sub = sub.lstrip("//")
+        for server in ("mikoto", "hime", "himeko", "yuko"):
+            if server != sub:
+                yield f"https://{server}.{url}"
 
     def items_user(self, users, key=None):
         base = self.root + "/profile/"
@@ -111,7 +129,7 @@ class IwaraExtractor(Extractor):
 
         raise self.exc.AbortExtraction(f"Unsupported result type '{type}'")
 
-    def extract_media_info(self, item, key, include_file_info=True):
+    def extract_media_info(self, item, key=None, include_file_info=True):
         info = {
             "id"      : item["id"],
             "slug"    : item.get("slug"),
@@ -121,7 +139,9 @@ class IwaraExtractor(Extractor):
             "comments": item.get("numComments"),
             "tags"    : [t["id"] for t in item.get("tags") or ()],
             "title"   : t.strip() if (t := item.get("title")) else "",
-            "description": t.strip() if (t := item.get("body")) else "",
+            "description" : t.strip() if (t := item.get("body")) else "",
+            "date"        : self.parse_datetime_iso(item.get("createdAt")),
+            "date_updated": self.parse_datetime_iso(item.get("updatedAt")),
         }
 
         if include_file_info:
@@ -131,9 +151,9 @@ class IwaraExtractor(Extractor):
             info["file_id"] = file_info.get("id")
             info["filename"] = filename
             info["extension"] = extension
-            info["date"] = self.parse_datetime_iso(
+            info["file_date"] = self.parse_datetime_iso(
                 file_info.get("createdAt"))
-            info["date_updated"] = self.parse_datetime_iso(
+            info["file_date_updated"] = self.parse_datetime_iso(
                 file_info.get("updatedAt"))
             info["mime"] = file_info.get("mime")
             info["size"] = file_info.get("size")
@@ -332,9 +352,7 @@ class IwaraAPI():
         self.extractor = extractor
         self.exc = extractor.exc
         self.headers = {
-            "Referer"     : extractor.root + "/",
             "Content-Type": "application/json",
-            "Origin"      : extractor.root,
             "X-Site"      : extractor.root[8:],
         }
 
@@ -429,7 +447,7 @@ class IwaraAPI():
             }
             data = self.extractor.request_json(
                 url, method="POST", headers=self.headers, json=json,
-                fatal=False)
+                expected=(400,))
 
             if not (refresh_token := data.get("token")):
                 self.extractor.log.debug(data)
@@ -455,7 +473,16 @@ class IwaraAPI():
 
         url = self.root + endpoint
         self.authenticate()
-        return self.extractor.request_json(url, params=params, headers=headers)
+        data = self.extractor.request_json(url, params=params, headers=headers)
+
+        if "message" in data and data["message"] == "errors.differentSite":
+            self.extractor.log.debug(data)
+            headers["X-Site"] = self.extractor.root[8:-2] + data["siteId"][-2:]
+            self.authenticate()
+            data = self.extractor.request_json(
+                url, params=params, headers=headers)
+
+        return data
 
     def _pagination(self, endpoint, params=None):
         if params is None:

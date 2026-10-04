@@ -20,7 +20,6 @@ import math
 import time
 import random
 import hashlib
-import binascii
 import itertools
 from ... import text, util
 
@@ -36,7 +35,14 @@ class ClientTransaction():
 
     def initialize(self, extractor, homepage=None):
         if homepage is None:
-            homepage = extractor.request("https://x.com/").text
+            response = extractor.request(
+                extractor.root + "/home", allow_redirects=False)
+            if 300 <= response.status_code < 400:
+                extractor.log.warning("HTTP redirect to login page (%s)",
+                                      response.headers.get("Location"))
+                extractor.log.warning("Update your login session cookies!")
+                response = extractor.request(extractor.root + "/i/jf/")
+            homepage = response.text
 
         key = self._extract_verification_key(homepage)
         if not key:
@@ -47,6 +53,8 @@ class ClientTransaction():
         ondemand_key = text.rextr(homepage, ",", ':', ondemand_pos)
         ondemand_s = text.extract(
             homepage, ondemand_key + ':"', '"', ondemand_pos)[0]
+        if not ondemand_s:
+            extractor.log.error("Failed to extract 'ondemand.s.…a.js' key")
 
         indices = extractor.cache(
             self._extract_indices, ondemand_s, extractor, _mem=False)
@@ -57,13 +65,13 @@ class ClientTransaction():
         if not frames:
             extractor.log.error("Failed to extract animation frame data")
 
-        self.key_bytes = key_bytes = binascii.a2b_base64(key)
+        self.key_bytes = key_bytes = util.b64rdecode(key)
         self.animation_key = self._calculate_animation_key(
             frames, indices[0], key_bytes, indices[1:])
 
     def _extract_verification_key(self, homepage):
         pos = homepage.find('name="twitter-site-verification"')
-        beg = homepage.rfind("<", 0, pos)
+        beg = homepage.rfind("<", None, pos)
         end = homepage.find(">", pos)
         return text.extr(homepage[beg:end], 'content="', '"')
 
@@ -151,7 +159,7 @@ class ClientTransaction():
             for byte in itertools.chain(
                 (0,), bytes_key, bytes_time, bytes_hash, (rndnum,))
         )
-        return binascii.b2a_base64(result).rstrip(b"=\n")
+        return util.b64rencode(result)
 
 
 # Cubic Curve

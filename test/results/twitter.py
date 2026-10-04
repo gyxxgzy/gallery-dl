@@ -237,8 +237,12 @@ __tests__ = (
 },
 
 {
+    "#url"     : "https://x.com/i/history",
+    "#class"   : twitter.TwitterBookmarkExtractor,
+},
+
+{
     "#url"     : "https://twitter.com/i/bookmarks",
-    "#category": ("", "twitter", "bookmark"),
     "#class"   : twitter.TwitterBookmarkExtractor,
 },
 
@@ -728,6 +732,44 @@ The Washington Post writes, "Three weeks after the toxic train derailment in Ohi
     "lang"           : "en",
     "source"         : "advertiser-interface",
     "type"           : "video",
+},
+
+{
+    "#url"     : "https://x.com/i/web/status/2036810333524738233",
+    "#comment" : "t.co link to 'external' card Tweet",
+    "#class"   : twitter.TwitterTweetExtractor,
+    "#options" : {"cards": True},
+    "#auth"    : "cookies",
+    "#count"   : 0,
+},
+
+{
+    "#url"     : "https://x.com/nikitabier/status/2018791489321713906",
+    "#comment" : "'poll_choice_images' card (gh#9511)",
+    "#class"   : twitter.TwitterTweetExtractor,
+    "#auth"    : True,
+    "#options" : {"cards": True},
+    "#results" : (
+        "https://pbs.twimg.com/card_img/2018786672511696896/m5Ruc5vN?format=jpg&name=orig",
+        "https://pbs.twimg.com/card_img/2018786687682527232/uUC90W_Q?format=jpg&name=orig",
+    ),
+},
+
+{
+    "#url"     : "https://x.com/hinpuu/status/2098577735610454337",
+    "#comment" : "'limitedActionResults' quote (#9767)",
+    "#class"   : twitter.TwitterTweetExtractor,
+    "#options" : {"quoted": True},
+    "#results" : "https://pbs.twimg.com/media/HR8eICKaQAASCkC?format=jpg&name=orig",
+
+    "conversation_id": 2098429080182087924,
+    "date"           : "dt:2026-09-11 15:10:54",
+    "width"          : 1434,
+    "height"         : 2048,
+    "lang"           : "ko",
+    "quote_id"       : 2098577735610454337,
+    "quoted_id"      : 0,
+    "tweet_id"       : 2098429080182087924,
 },
 
 {

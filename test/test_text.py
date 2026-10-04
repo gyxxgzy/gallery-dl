@@ -354,6 +354,36 @@ class TestText(unittest.TestCase):
             self.assertEqual(f(txt  , value, ">")  , "")
             self.assertEqual(f(txt  , "<"  , value), "")
 
+    def test_iextr(self, f=text.iextr):
+        txt = "foo <b id='e'>/b/a/r/</b> baz"
+        self.assertEqual(f(txt, "/", ">", "<"), "/b/a/r/")
+        self.assertEqual(f(txt, "b", "<", ">"), "b id='e'")
+        self.assertEqual(f(txt, "'e'", "<", ">"), "b id='e'")
+        self.assertEqual(f(txt, "=", "b ", ">"), "id='e'")
+
+        # missing 'needle'
+        self.assertEqual(f(txt, "z", "<", ">"), "")
+        self.assertEqual(f(txt, "z", "<", ">"), "")
+        self.assertEqual(f(txt, "z", "<", ">"), "")
+
+        # 'pos' argument
+        self.assertEqual(f(txt, "/", "/", "/", 15), "b/a")
+        self.assertEqual(f(txt, "/", "/", "/", 17), "a/r")
+        self.assertEqual(f(txt, "b", "<", ">", 0) , "b id='e'")
+        self.assertEqual(f(txt, "b", "<", ">", 11), "b id='e'>/b/a/r/</b")
+
+        # 'default' argument
+        self.assertEqual(f(txt, "z", "[", "]", -1, "none"), "none")
+        self.assertEqual(f(txt, "z", "[", "]", None, "none"), "none")
+        self.assertEqual(f(txt, "z", "[", "]", default="none"), "none")
+
+        # invalid arguments
+        for value in INVALID:
+            self.assertEqual(f(value, "z"  , ">"  , "<")  , "")
+            self.assertEqual(f(txt  , value, ">"  , "<")  , "")
+            self.assertEqual(f(txt  , "z"  , value, "<")  , "")
+            self.assertEqual(f(txt  , "z"  , ">"  , value), "")
+
     def test_extract_all(self, f=text.extract_all):
         txt = "[c][b][a]: xyz! [d][e"
 
@@ -495,6 +525,13 @@ class TestText(unittest.TestCase):
         self.assertEqual(f(" 123.89 "), 124)
         self.assertEqual(f("0.5M"), round(0.5 * 1024**2))
 
+        # 'base' argument
+        self.assertEqual(f("0", base=1000), 0)
+        self.assertEqual(f("50", base=1000), 50)
+        self.assertEqual(f("50k", base=1000), 50 * 1_000)
+        self.assertEqual(f("50m", base=1000), 50 * 1_000_000)
+        self.assertEqual(f(" 50p ", base=10), 50 * 100_000)
+
         # invalid arguments
         for value in INVALID_ALT:
             self.assertEqual(f(value), 0)
@@ -602,6 +639,14 @@ class TestText(unittest.TestCase):
         self.assertEqual(f({}), "")
         self.assertEqual(f({"foo": "1"}), "foo=1")
         self.assertEqual(f({"foo": "1", "bar": "2"}), "foo=1&bar=2")
+
+        # bytes values
+        self.assertEqual(f({"foo": b"1"}), "foo=1")
+        self.assertEqual(f({"foo": b"1", "bar": "2"}), "foo=1&bar=2")
+
+        # int values
+        self.assertEqual(f({"foo": 1}), "foo=1")
+        self.assertEqual(f({"foo": 1, "bar": "2"}), "foo=1&bar=2")
 
         # missing value
         self.assertEqual(f({"bar": ""}), "bar=")

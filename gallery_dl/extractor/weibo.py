@@ -33,10 +33,12 @@ class WeiboExtractor(Extractor):
 
     def _init(self):
         self.livephoto = self.config("livephoto", True)
+        self.livephoto_video = (self.livephoto == "video")
         self.retweets = self.config("retweets", False)
         self.longtext = self.config("text", False)
         self.videos = self.config("videos", True)
         self.movies = self.config("movies", False)
+        self.likes = self.config("likes", False)
         self.gifs = self.config("gifs", True)
         self.gifs_video = (self.gifs == "video")
 
@@ -76,6 +78,7 @@ class WeiboExtractor(Extractor):
 
     def items(self):
         original_retweets = (self.retweets == "original")
+        is_like = text.re(r"\d-\d\d?赞过").search
 
         for status in self.statuses():
 
@@ -91,7 +94,7 @@ class WeiboExtractor(Extractor):
                 # videos of the original post are in status
                 # images of the original post are in status["retweeted_status"]
                 files = []
-                self._extract_status(status, files)
+                self._extract_retweet(status, files)
                 self._extract_status(status["retweeted_status"], files)
 
                 if original_retweets:
@@ -99,6 +102,17 @@ class WeiboExtractor(Extractor):
             else:
                 files = []
                 self._extract_status(status, files)
+
+            if title := status.get("title"):
+                if is_like(title.get("text") or ""):
+                    if not self.likes:
+                        self.log.debug("Skipping %s (赞过 like)", status["id"])
+                        continue
+                    status["like"] = True
+                else:
+                    status["like"] = False
+            else:
+                status["like"] = None
 
             if self.longtext and status.get("isLongText") and \
                     status["text"].endswith('class="expand">展开</span>'):
@@ -120,6 +134,12 @@ class WeiboExtractor(Extractor):
                     text.nameext_from_url(url, file)
                     if file["extension"] == "json":
                         file["extension"] = "mp4"
+                    elif not file["extension"]:
+                        params = text.parse_query(url[url.find("?")+1:])
+                        if "livephoto" in params:
+                            text.nameext_from_url(params["livephoto"], file)
+                        else:
+                            file["extension"] = "mp4"
                 if file["extension"] == "m3u8":
                     url = "ytdl:" + url
                     file["_ytdl_manifest"] = "hls"
@@ -138,7 +158,9 @@ class WeiboExtractor(Extractor):
                         files.append(self._extract_video(
                             item["data"]["media_info"]))
                 elif type == "pic":
-                    files.append(item["data"]["largest"].copy())
+                    file = item["data"]["largest"].copy()
+                    file["type"] = "pic"
+                    files.append(file)
                 else:
                     self.log.warning("Unknown media type '%s'", type)
             return
@@ -151,16 +173,21 @@ class WeiboExtractor(Extractor):
 
                 if pic_type == "gif" and self.gifs:
                     if self.gifs_video:
-                        files.append({"url": pic["video"]})
+                        file = {"url": pic["video"]}
                     else:
-                        files.append(pic["largest"].copy())
+                        file = pic["largest"].copy()
 
                 elif pic_type == "livephoto" and self.livephoto:
-                    files.append(pic["largest"].copy())
-                    files.append({"url": pic["video"]})
+                    if not self.livephoto_video:
+                        file = pic["largest"].copy()
+                        file["type"] = "livephoto"
+                        files.append(file)
+                    file = {"url": pic["video"]}
 
                 else:
-                    files.append(pic["largest"].copy())
+                    file = pic["largest"].copy()
+                file["type"] = pic_type
+                files.append(file)
 
         if "page_info" in status:
             info = status["page_info"]
@@ -170,6 +197,16 @@ class WeiboExtractor(Extractor):
                 else:
                     self.log.debug("%s: Ignoring 'movie' video", status["id"])
 
+    def _extract_retweet(self, status, files):
+        self._extract_status(status, files)
+        if "url_struct" in status:
+            for item in status["url_struct"]:
+                if pics := item.get("pic_infos"):
+                    for pic in pics.values():
+                        file = pic.get("largest") or pic["large"]
+                        file["type"] = "pic"
+                        files.append(file)
+
     def _extract_video(self, info):
         if info.get("live_status") == 1:
             self.log.debug("Skipping ongoing live stream")
@@ -177,7 +214,7 @@ class WeiboExtractor(Extractor):
 
         try:
             media = max(info["playback_list"],
-                        key=lambda m: m["meta"]["quality_index"])
+                        key=lambda m: m["meta"].get("quality_index", 0))
         except Exception:
             video = {"url": (info.get("replay_hd") or
                              info.get("stream_url_hd") or
@@ -193,6 +230,7 @@ class WeiboExtractor(Extractor):
                 self.log.warning("%s: %s", exc.__class__.__name__, exc)
                 video["url"] = ""
 
+        video["type"] = "video"
         return video
 
     def _status_by_id(self, status_id):

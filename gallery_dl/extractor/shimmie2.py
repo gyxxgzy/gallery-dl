@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2023-2025 Mike Fährmann
+# Copyright 2023-2026 Mike Fährmann
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License version 2 as
@@ -87,10 +87,9 @@ BASE_PATTERN = Shimmie2Extractor.update({
         "root": "https://co.llection.pics",
         "pattern": r"co\.llection\.pics",
     },
-    "soybooru": {
-        "root": "https://soybooru.com",
-        "pattern": r"soybooru\.com",
-        "quote": "'",
+    "prequelfanart": {
+        "root": "https://www.prequeladventure.com/fanartbooru",
+        "pattern": r"(?:www\.)?prequeladventure\.com/fanartbooru",
     },
 }) + r"/(?:index\.php\?q=/?)?"
 
@@ -122,6 +121,7 @@ class Shimmie2TagExtractor(Shimmie2Extractor):
             if init:
                 init = False
                 quote = self._quote_type(page)
+                quote_alt = "'" if quote == '"' else '"'
                 has_mime = (" data-mime=" in page)
                 has_pid = (" data-post-id=" in page)
 
@@ -138,10 +138,14 @@ class Shimmie2TagExtractor(Shimmie2Extractor):
 
                 data = extr("title="+quote, quote).split(" // ")
                 tags = data[0]
-                dimensions = data[1]
-                size = data[2]
 
-                width, _, height = dimensions.partition("x")
+                try:
+                    width, _, height = data[1].partition("x")
+                    size = data[2]
+                except Exception:
+                    width = height = 0
+                    size = ""
+
                 md5 = extr("/_thumbs/", "/")
 
                 yield {
@@ -157,7 +161,8 @@ class Shimmie2TagExtractor(Shimmie2Extractor):
                 }
 
             pnum += 1
-            if not extr(f"/{pnum}{quote}>Next</", ">"):
+            if not extr(f"/{pnum}{quote}>Next</", ">") and \
+                    not extr(f"/{pnum}{quote_alt}>Next</", ">"):
                 return
 
 
@@ -178,17 +183,26 @@ class Shimmie2PostExtractor(Shimmie2Extractor):
         qt = self._quote_type(page)
 
         post = {
-            "id"      : post_id,
-            "tags"    : extr(": ", "<").partition(" - ")[0].rstrip(")"),
-            "md5"     : extr("/_thumbs/", "/"),
-            "file_url": base + (
-                extr(f"id={qt}main_image{qt} src={qt}", qt) or
-                extr("<source src="+qt, qt)).lstrip("."),
-            "width"   : extr("data-width=", " ").strip("\"'"),
-            "height"  : extr("data-height=", ">").partition(
-                " ")[0].strip("\"'"),
-            "size"    : 0,
+            "id"  : post_id,
+            "tags": extr(": ", "<").partition(" - ")[0].rstrip(")"),
+            "md5" : extr("/_thumbs/", "/"),
+            ""    : (extr(f"id={qt}main_image{qt}", ">") or
+                     extr("<source ", ">")),
+            "source": text.extr(
+                extr(">Source Link<", "</tr>"), "href="+qt, qt),
+            "parent_id": text.parse_int(text.remove_html(
+                extr("Parent</th>", "</tr>")), None),
+            "rating": text.remove_html(
+                extr(">Rating</th>", "</tr>")),
+            "size": text.parse_bytes(
+                extr(">Info</th>", "B</").rpartition(" // ")[2]),
         }
+
+        file = post.pop("")
+        post["file_url"] = base + text.extr(file, "src="+qt, qt).lstrip(".")
+        post["width"] = text.extr(file, "data-width="+qt, qt)
+        post["height"] = text.extr(
+            file, "data-height="+qt, qt).partition(" ")[0]
 
         if not post["md5"]:
             post["md5"] = text.extr(post["file_url"], "/_images/", "/")

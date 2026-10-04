@@ -25,33 +25,33 @@ query SubredditPostQuery(
 }
 """
 
-UserPostsQuery = """\
-query UserPostsQuery(
+RedditUserPostsQuery = """\
+query RedditUserPostsQuery(
     $username: String!
     $iterator: String
     $limit: Int!
     $filter: GalleryFilter
     $sortBy: GallerySortBy
-    $isNsfw: Boolean
+    $nsfw: NsfwFilter!
 ) {
-    getUserPosts(
+    getRedditUserPosts(
         data: {
             username: $username
             iterator: $iterator
             limit: $limit
             filter: $filter
             sortBy: $sortBy
-            isNsfw: $isNsfw
+            nsfw: $nsfw
         }
     ) {
         iterator items {
-            __typename id url title posted_by reddit_posted_by subredditId
+            __typename id url title reddit_posted_by subredditId
             subredditTitle subredditUrl subredditIsFollowing redditPath isNsfw
             hasAudio fullLengthSource gfycatSource redgifsSource ownerAvatar
             username displayName favoriteCount isPaid tags commentsCount
             commentsRepliesCount duration createdAt isFavorite
-            albumContent { mediaSources { url width height isOptimized } }
-            mediaSources { url width height isOptimized }
+            albumContent { mediaSources { url width height isOptimized type } }
+            mediaSources { url width height isOptimized type }
             blurredMediaSources { url width height isOptimized type }
         }
     }
@@ -101,7 +101,7 @@ query SubredditChildrenQuery(
     $filter: GalleryFilter
     $sortBy: GallerySortBy
     $limit: Int!
-    $isNsfw: Boolean
+    $nsfw: NsfwFilter
 ) {
     getSubredditChildren(
         data: {
@@ -110,7 +110,7 @@ query SubredditChildrenQuery(
             filter: $filter,
             sortBy: $sortBy,
             limit: $limit,
-            isNsfw: $isNsfw
+            nsfw: $nsfw
         },
     ) {
         iterator items {
@@ -131,12 +131,12 @@ query GetFollowingSubreddits(
     $iterator: String,
     $limit: Int!,
     $filter: GalleryFilter,
-    $isNsfw: Boolean,
+    $nsfw: NsfwFilter,
     $sortBy: GallerySortBy
 ) {
     getFollowingSubreddits(
         data: {
-            isNsfw: $isNsfw
+            nsfw: $nsfw
             limit: $limit
             filter: $filter
             iterator: $iterator

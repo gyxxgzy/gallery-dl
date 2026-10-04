@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2022-2025 Mike Fährmann
+# Copyright 2022-2026 Mike Fährmann
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License version 2 as
@@ -10,7 +10,6 @@
 
 from .common import BaseExtractor, Message
 from .. import text, util
-import binascii
 
 
 class NitterExtractor(BaseExtractor):
@@ -54,16 +53,15 @@ class NitterExtractor(BaseExtractor):
                         continue
 
                     if "/enc/" in url:
-                        name = binascii.a2b_base64(url.rpartition(
-                            "/")[2]).decode().rpartition("/")[2]
+                        name = util.b64decode(
+                            url.rpartition("/")[2]).rpartition("/")[2]
                     else:
-                        name = url.rpartition("%2F")[2]
+                        name = text.unquote(url.rpartition("%2F")[2])
 
                     if url[0] == "/":
                         url = self.root + url
-                    file = {"url": url, "_http_retry": _retry_on_404}
-                    file["filename"], _, file["extension"] = \
-                        name.rpartition(".")
+                    file = text.nameext_from_url(
+                        name, {"url": url, "_http_retry": _retry_on_404})
                     files.append(file)
 
                 if videos and not files:
@@ -75,10 +73,10 @@ class NitterExtractor(BaseExtractor):
                                 attachments, 'data-url="', '"'):
 
                             if "/enc/" in url:
-                                name = binascii.a2b_base64(url.rpartition(
-                                    "/")[2]).decode().rpartition("/")[2]
+                                name = util.b64decode(
+                                    url.rpartition("/")[2]).rpartition("/")[2]
                             else:
-                                name = url.rpartition("%2F")[2]
+                                name = text.unquote(url.rpartition("%2F")[2])
 
                             if url[0] == "/":
                                 url = self.root + url
@@ -160,8 +158,7 @@ class NitterExtractor(BaseExtractor):
 
         try:
             if "/enc/" in banner:
-                uid = binascii.a2b_base64(banner.rpartition(
-                    "/")[2]).decode().split("/")[4]
+                uid = util.b64decode(banner.rpartition("/")[2]).split("/")[4]
             else:
                 uid = banner.split("%2F")[4]
         except Exception:
@@ -197,23 +194,35 @@ class NitterExtractor(BaseExtractor):
         return (html, None)
 
     def _pagination(self, path):
+        more = None
+        tries = 0
+        retries = self.config("fallback-retries", 2) + 1
         quoted = self.config("quoted", False)
 
         if self.user_id:
-            self.user = self.request(
-                f"{self.root}/i/user/{self.user_id}",
-                allow_redirects=False,
-            ).headers["location"].rpartition("/")[2]
+            self.user = self.request_location(
+                f"{self.root}/i/user/{self.user_id}", method="GET",
+            ).rpartition("/")[2]
         base_url = url = f"{self.root}/{self.user}{path}"
 
         while True:
             tweets_html = self.request(url).text.split(
                 '<div class="timeline-item')
 
+            tlen = len(tweets_html)
+            if more is None and tlen == 1 or more is not None and \
+                    tlen <= 2 and ">No more items</h2>" in tweets_html[-1]:
+                tries += 1
+                self.log.warning("Empty Tweet results (%s/%s)", tries, retries)
+                if tries >= retries:
+                    break
+                continue
+
             if self.user_obj is None:
                 self.user_obj = self._user_from_html(tweets_html[0])
 
-            for html, quote in map(self._extract_quote, tweets_html[1:]):
+            del tweets_html[0]
+            for html, quote in map(self._extract_quote, tweets_html):
                 tweet = self._tweet_from_html(html)
                 if not tweet["date"]:
                     continue
@@ -224,8 +233,9 @@ class NitterExtractor(BaseExtractor):
             more = text.extr(
                 tweets_html[-1], '<div class="show-more"><a href="?', '"')
             if not more:
-                return
-            url = base_url + "?" + text.unescape(more)
+                break
+            url = f"{base_url}?{text.unescape(more)}"
+            tries = 0
 
 
 BASE_PATTERN = NitterExtractor.update({

@@ -10,7 +10,6 @@
 
 from .common import BaseExtractor, Message
 from .. import text, util
-import binascii
 
 
 class XenforoExtractor(BaseExtractor):
@@ -77,17 +76,18 @@ class XenforoExtractor(BaseExtractor):
                             ext = "https:" + ext
                         elif ext.startswith("/goto/link-confirmation?"):
                             params = text.parse_query(text.unescape(ext[24:]))
-                            ext = binascii.a2b_base64(params["url"]).decode()
+                            ext = self._b64decode(params["url"])
                         elif ext.startswith("/redirect/"):
                             if to := text.extr(ext, "?to=", "&"):
-                                ext = binascii.a2b_base64(to).decode()
-                            else:
-                                ext = text.unescape(text.extr(
-                                    ext, ">", "<").strip())
+                                ext = self._b64decode(to)
+                            elif html := text.extr(ext, ">", "<").strip():
+                                ext = text.unescape(html)
                         else:
                             continue
                     elif '"' in ext:
                         ext = ext[:ext.find('"')]
+                    if ext.startswith("https://anonym.es/?"):
+                        ext = text.unquote(ext[19:])
                     data["num"] += 1
                     data["num_external"] += 1
                     data["type"] = "external"
@@ -278,6 +278,9 @@ class XenforoExtractor(BaseExtractor):
             content = content[:beg] + content[end+13:]
         return content
 
+    def _b64decode(self, value):
+        return util.b64decode(value.replace("-", "+").replace("_", "/") + "==")
+
     def _extract_error(self, html):
         if msg := (text.extr(html, "blockMessage--error", "</") or
                    text.extr(html, '"blockMessage"', "</div>")):
@@ -318,6 +321,10 @@ class XenforoExtractor(BaseExtractor):
         except ValueError:
             return {}
 
+        path = text.split_html(text.extr(
+            page, 'class="p-breadcrumbs', "</ul>"))
+        del path[0]
+
         main = data.get("mainEntity", data)
         url = main.get("url") or main.get("@id") or ""
 
@@ -329,6 +336,7 @@ class XenforoExtractor(BaseExtractor):
             "tags" : (main["keywords"].split(", ")
                       if "keywords" in main else ()),
             "section": main["articleSection"],
+            "path" : path,
         })
 
         stats = main["interactionStatistic"]
@@ -342,7 +350,8 @@ class XenforoExtractor(BaseExtractor):
         return thread
 
     def _parse_album(self, page):
-        main = self._extract_jsonld(page)["mainEntity"]
+        data = self._extract_jsonld(page)
+        main = data.get("mainEntity") or data
         url = main.get("url") or main.get("@id") or ""
         slug, _, id = url[url.rfind("/", 0, -1)+1:-1].rpartition(".")
 
@@ -503,8 +512,8 @@ BASE_PATTERN = XenforoExtractor.update({
         "pattern": r"(?:www\.)?allthefallen\.moe/forum",
     },
     "celebforum": {
-        "root": "https://celebforum.to",
-        "pattern": r"(?:www\.)?celebforum\.to",
+        "root": "https://celebforum.cc",
+        "pattern": r"(?:www\.)?celebforum\.(?:cc|to)",
     },
     "titsintops": {
         "root": "https://titsintops.com/phpBB2",
@@ -518,12 +527,20 @@ BASE_PATTERN = XenforoExtractor.update({
         "root": "https://www.blacktowhite.net",
         "pattern": r"(?:www\.)?blacktowhite\.net",
     },
+    "thefappeningforum": {
+        "root": "https://thefappeningblog.com/forum",
+        "pattern": r"(?:www\.)?thefappeningblog\.com/forum",
+    },
+    "thirsthub": {
+        "root": "https://thirsthub.cc",
+        "pattern": r"thirsthub\.cc",
+    },
 })
 
 
 class XenforoPostExtractor(XenforoExtractor):
     subcategory = "post"
-    pattern = (BASE_PATTERN + r"(/(?:index\.php\?)?threads"
+    pattern = (BASE_PATTERN + r"(/(?:index\.php\?)?th(?:reads|ema)"
                r"/[^/?#]+/(?:page-\d+)?#?post-|/posts/)(\d+)")
     example = "https://simpcity.cr/threads/TITLE.12345/post-54321"
 
@@ -544,7 +561,7 @@ class XenforoPostExtractor(XenforoExtractor):
 
 class XenforoThreadExtractor(XenforoExtractor):
     subcategory = "thread"
-    pattern = (BASE_PATTERN + r"(/(?:index\.php\?)?threads"
+    pattern = (BASE_PATTERN + r"(/(?:index\.php\?)?th(?:reads|ema)"
                r"/(?:[^/?#]+\.)?\d+)(?:/page-(\d+))?")
     example = "https://simpcity.cr/threads/TITLE.12345/"
 
@@ -578,7 +595,7 @@ class XenforoThreadExtractor(XenforoExtractor):
 
 class XenforoForumExtractor(XenforoExtractor):
     subcategory = "forum"
-    pattern = (BASE_PATTERN + r"(/(?:index\.php\?)?forums"
+    pattern = (BASE_PATTERN + r"(/(?:index\.php\?)?forums?"
                r"/(?:[^/?#]+\.)?[^/?#]+)(?:/page-(\d+))?")
     example = "https://simpcity.cr/forums/TITLE.123/"
 

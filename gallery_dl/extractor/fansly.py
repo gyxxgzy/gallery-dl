@@ -235,10 +235,7 @@ class FanslyAPI():
 
     def __init__(self, extractor):
         self.extractor = extractor
-        self.headers = {
-            "fansly-client-ts": None,
-            "Origin"          : extractor.root,
-        }
+        self.headers = {}
 
         if token := extractor.config("token"):
             self.headers["authorization"] = token
@@ -264,13 +261,11 @@ class FanslyAPI():
 
     def accounts_by_id(self, account_ids):
         endpoint = "/v1/account"
-        params = {"ids": ",".join(map(str, account_ids))}
-        return self._call(endpoint, params)
+        return self._batch_ids(endpoint, account_ids)
 
     def account_media(self, media_ids):
         endpoint = "/v1/account/media"
-        params = {"ids": ",".join(map(str, media_ids))}
-        return self._call(endpoint, params)
+        return self._batch_ids(endpoint, media_ids)
 
     def lists_account(self):
         endpoint = "/v1/lists/account"
@@ -400,12 +395,10 @@ class FanslyAPI():
     def _call(self, endpoint, params):
         url = f"{self.ROOT}/api{endpoint}"
         params["ngsw-bypass"] = "true"
-        headers = self.headers.copy()
-        headers["fansly-client-ts"] = str(int(time.time() * 1000))
+        self.headers["fansly-client-ts"] = str(int(time.time() * 1000))
 
-        data = self.extractor.request_json(
-            url, params=params, headers=headers)
-        return data["response"]
+        return self.extractor.request_json(
+            url, params=params, headers=self.headers)["response"]
 
     def _pagination(self, endpoint, params):
         while True:
@@ -434,3 +427,14 @@ class FanslyAPI():
                 return
             yield from self._update_media(data, response["aggregationData"])
             params["before"] = data[-1]["id"]
+
+    def _batch_ids(self, endpoint, ids, batch=64):
+        results = ()
+        for i in range(0, len(ids), batch):
+            items = self._call(endpoint, {
+                "ids": ",".join(map(str, ids[i:i+batch]))})
+            if results:
+                results.extend(items)
+            else:
+                results = items
+        return results

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright 2020 Leonardo Taccari
-# Copyright 2021-2025 Mike Fährmann
+# Copyright 2021-2026 Mike Fährmann
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License version 2 as
@@ -10,7 +10,7 @@
 """Extractors for https://www.webtoons.com/"""
 
 from .common import GalleryExtractor, Extractor, Message
-from .. import text, util
+from .. import text, util, dt
 
 BASE_PATTERN = r"(?:https?://)?(?:www\.)?webtoons\.com"
 LANG_PATTERN = BASE_PATTERN + r"/(([^/?#]+)"
@@ -20,7 +20,8 @@ class WebtoonsBase():
     category = "webtoons"
     root = "https://www.webtoons.com"
     directory_fmt = ("{category}", "{comic}")
-    filename_fmt = "{episode_no}-{num:>02}{type:?-//}.{extension}"
+    filename_fmt = ("{episode_no}-{num:>02}{type:?-//}{sortOrder:?//}."
+                    "{extension}")
     archive_fmt = "{title_no}_{episode_no}_{num}"
     cookies_domain = ".webtoons.com"
     request_interval = (0.5, 1.5)
@@ -155,20 +156,14 @@ class WebtoonsEpisodeExtractor(WebtoonsBase, GalleryExtractor):
         return assets
 
     def _asset_bgm(self, assets, bgm_list):
-        import binascii
         params = {
             #  "quality"     : "MIDDLE",
             "quality"     : "HIGH",  # no difference to 'MIDDLE'
             "acceptCodecs": "AAC,MP3",
         }
         headers = {
-            "Accept"        : "application/json",
-            "Content-Type"  : "application/json",
-            "Origin"        : self.root,
-            "Referer"       : self.root + "/",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "cross-site",
+            "Accept"      : "application/json",
+            "Content-Type": "application/json",
         }
         paths = self.paths
 
@@ -184,7 +179,7 @@ class WebtoonsEpisodeExtractor(WebtoonsBase, GalleryExtractor):
             data = self.request_json(
                 url, params=params, headers=headers, interval=False)
             token = data["result"]["playToken"]
-            data = util.json_loads(binascii.a2b_base64(token).decode())
+            data = util.json_loads(util.b64decode(token))
             audio = data["audioInfo"]
             play = bgm.get("playImageUrl", "")
             stop = bgm.get("stopImageUrl", "")
@@ -215,10 +210,11 @@ class WebtoonsComicExtractor(WebtoonsBase, Extractor):
 
     def items(self):
         kw = self.kwdict
-        base, kw["lang"], kw["genre"], kw["comic"], query = self.groups
+        base, lang, kw["genre"], kw["comic"], query = self.groups
         params = text.parse_query(query)
         kw["title_no"] = title_no = text.parse_int(params.get("title_no"))
         kw["page"] = page_no = text.parse_int(params.get("page"), 1)
+        kw["lang"] = lang
 
         path = f"/{base}/list?title_no={title_no}&page={page_no}"
         response = self.request(self.root + path)
@@ -233,9 +229,10 @@ class WebtoonsComicExtractor(WebtoonsBase, Extractor):
 
         data = {"_extractor": WebtoonsEpisodeExtractor}
         while True:
-            for url in self.get_episode_urls(page):
+            for url, dt_string in self._extract_episodes(page):
                 params = text.parse_query(url.rpartition("?")[2])
                 data["episode_no"] = text.parse_int(params.get("episode_no"))
+                data["date"] = _parse_date(dt_string, lang)
                 yield Message.Queue, url, data
 
             kw["page"] = page_no = page_no + 1
@@ -244,12 +241,13 @@ class WebtoonsComicExtractor(WebtoonsBase, Extractor):
                 return
             page = self.request(self.root + path).text
 
-    def get_episode_urls(self, page):
-        """Extract and return all episode urls in 'page'"""
+    def _extract_episodes(self, page):
+        """Extract and return all episode urls and dates in 'page'"""
         page = text.extr(page, 'id="_listUl"', "</ul>")
         return [
-            match[0]
-            for match in WebtoonsEpisodeExtractor.pattern.finditer(page)
+            (text.extr(ep, ' href="', '"'),
+             text.extr(ep, ' class="date">', '<'))
+            for ep in text.extract_iter(page, ' class="_episodeItem', "</li>")
         ]
 
     def _asset_banner(self, page):
@@ -297,3 +295,37 @@ class WebtoonsArtistExtractor(WebtoonsBase, Extractor):
 
 def _url(url):
     return url.replace("://webtoon-phinf.", "://swebtoon-phinf.")
+
+
+def _parse_date(date_string, lang):
+    """Parse a locale-dependent date string from the episode list"""
+    try:
+        date_string = date_string.strip()
+
+        if lang == "en":
+            return dt.parse(date_string, "%b %d, %Y")
+        if lang == "de":
+            return dt.parse(date_string, "%d.%m.%Y")
+        if lang == "id":
+            return dt.parse(date_string, "%d %b %Y")
+        if lang == "zh-hant":
+            year, month, day = date_string.replace(
+                "年", " ").replace("月", " ").replace("日", "").split()
+            return dt.datetime(int(year), int(month), int(day))
+
+        if lang == "fr":
+            months = ("janv", "févr", "mars", "avr", "mai", "juin",
+                      "juil", "août", "sept", "oct", "nov", "déc")
+        elif lang == "es":
+            months = ("ene", "feb", "mar", "abr", "may", "jun",
+                      "jul", "ago", "sept", "oct", "nov", "dic")
+        elif lang == "th":
+            months = ("มค", "กพ", "มีค", "เมย", "พค", "มิย",
+                      "กค", "สค", "กย", "ตค", "พย", "ธค")
+        else:
+            return dt.NONE
+        day, month, year = date_string.replace(".", "").split()
+        month = months.index(month.lower()) + 1
+        return dt.datetime(int(year), month, int(day))
+    except Exception:
+        return dt.NONE

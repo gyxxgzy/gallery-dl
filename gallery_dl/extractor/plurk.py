@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2019-2025 Mike Fährmann
+# Copyright 2019-2026 Mike Fährmann
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License version 2 as
@@ -11,21 +11,53 @@
 from .common import Extractor, Message
 from .. import text, util, dt
 
+BASE_PATTERN = r"(?:https?://)?(?:www\.)?plurk\.com"
+
 
 class PlurkExtractor(Extractor):
     """Base class for plurk extractors"""
     category = "plurk"
     root = "https://www.plurk.com"
+    directory_fmt = ("{category}", "{user_id}")
+    filename_fmt = "{plurk_id}_{num}.{extension}"
+    archive_fmt = "{plurk_id}_{num}"
     request_interval = (0.5, 1.5)
 
     def items(self):
         urls = self._urls_ex if self.config("comments", False) else self._urls
-        for plurk in self.plurks():
-            for url in urls(plurk):
-                yield Message.Queue, url, plurk
+        replurk = self.config("replurk", False)
+        external = self.config("external", False)
+        internal = (
+            "https://images.plurk.com/",
+            "https://imgs.plurk.com/",
+            "http://images.plurk.com/",
+            "http://imgs.plurk.com/",
+        )
 
-    def plurks(self):
-        """Return an iterable with all relevant 'plurk' objects"""
+        for plurk in self.plurks():
+            if not replurk and plurk.get("replurked"):
+                continue
+            plurk["plurk_id_base36"] = util.b36encode(plurk.get("plurk_id"))
+            plurk["date"] = self.parse_datetime(
+                plurk.get("posted"), "%a, %d %b %Y %H:%M:%S %Z")
+            if plurk.get("last_edited"):
+                plurk["date_edited"] = self.parse_datetime(
+                    plurk.get("last_edited"), "%a, %d %b %Y %H:%M:%S %Z")
+            plurk.pop("favorers", None)
+            plurk.pop("replurkers", None)
+
+            num = 1
+            yield Message.Directory, "", plurk
+            for url in urls(plurk):
+                data = plurk.copy()
+                data["num"] = num
+                if url.startswith(internal):
+                    yield Message.Url, url, text.nameext_from_url(url, data)
+                    num += 1
+                elif external:
+                    text.nameext_from_url(url, data)
+                    yield Message.Queue, url, data
+                    num += 1
 
     def _urls(self, obj):
         """Extract URLs from a 'plurk' object"""
@@ -41,11 +73,7 @@ class PlurkExtractor(Extractor):
         """Return an iterable with a 'plurk's comments"""
         url = "https://www.plurk.com/Responses/get"
         data = {"plurk_id": plurk["id"], "count": "200"}
-        headers = {
-            "Origin": self.root,
-            "Referer": self.root,
-            "X-Requested-With": "XMLHttpRequest",
-        }
+        headers = {"X-Requested-With": "XMLHttpRequest"}
 
         while True:
             info = self.request_json(
@@ -65,17 +93,13 @@ class PlurkExtractor(Extractor):
 
 
 class PlurkTimelineExtractor(PlurkExtractor):
-    """Extractor for URLs from all posts in a Plurk timeline"""
+    """Extractor for a plurk timeline"""
     subcategory = "timeline"
-    pattern = r"(?:https?://)?(?:www\.)?plurk\.com/(?!p/)(\w+)/?(?:$|[?#])"
+    pattern = BASE_PATTERN + r"/(?!p/)([^/?#]+)"
     example = "https://www.plurk.com/USER"
 
-    def __init__(self, match):
-        PlurkExtractor.__init__(self, match)
-        self.user = match[1]
-
     def plurks(self):
-        url = f"{self.root}/{self.user}"
+        url = f"{self.root}/{self.groups[0]}"
         page = self.request(url).text
         user_id, pos = text.extract(page, '"page_user": {"id":', ',')
         plurks = self._load(text.extract(page, "_PLURKS = ", ";\n", pos)[0])
@@ -94,9 +118,9 @@ class PlurkTimelineExtractor(PlurkExtractor):
 
 
 class PlurkPostExtractor(PlurkExtractor):
-    """Extractor for URLs from a Plurk post"""
+    """Extractor for a plurk post"""
     subcategory = "post"
-    pattern = r"(?:https?://)?(?:www\.)?plurk\.com/p/(\w+)"
+    pattern = BASE_PATTERN + r"/p/([^/?#]+)"
     example = "https://www.plurk.com/p/12345"
 
     def plurks(self):

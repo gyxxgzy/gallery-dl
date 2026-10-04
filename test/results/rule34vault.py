@@ -17,6 +17,17 @@ __tests__ = (
 },
 
 {
+    "#url"     : "https://rule34vault.com/beach%7Csummer",
+    "#comment" : "multiple tags (gh#9646)",
+    "#class"   : rule34vault.Rule34vaultTagExtractor,
+    "#pattern" : r"https://r34xyz\.b-cdn\.net/posts/\d+/\d+/\d+\.\w+",
+    "#range"   : "1-50",
+    "#count"   : 50,
+
+    "search_tags": "beach summer",
+},
+
+{
     "#url"  : "https://rule34vault.com/playlists/view/20164",
     "#class": rule34vault.Rule34vaultPlaylistExtractor,
     "#pattern": r"https://r34xyz\.b-cdn\.net/posts/\d+/\d+/\d+\.(jpg|mp4)",
@@ -52,10 +63,11 @@ __tests__ = (
     },
     "tags": [
         "ai generated",
-        "demon slayer",
-        "kamado nezuko",
-        "school uniform",
         "sfw",
+        "demon slayer",
+        "2:3",
+        "school uniform",
+        "kamado nezuko",
     ],
     "tags_character": [
         "kamado nezuko",
@@ -64,9 +76,12 @@ __tests__ = (
         "demon slayer",
     ],
     "tags_general": [
-        "ai generated",
-        "school uniform",
         "sfw",
+        "school uniform",
+    ],
+    "tags_meta": [
+        "ai generated",
+        "2:3",
     ],
     "uploader": {
         "created"      : "2023-07-24T04:33:36.734495Z",

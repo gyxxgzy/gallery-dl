@@ -151,6 +151,13 @@ class BlueskyExtractor(Extractor):
                     files.append(self._extract_media(image, "image"))
                 except Exception:
                     pass
+        if "items" in media:
+            for item in media["items"]:
+                try:
+                    files.append(self._extract_media(
+                        item, "image" if "image" in item else "video"))
+                except Exception:
+                    pass
         if "video" in media and self.videos:
             try:
                 files.append(self._extract_media(media, "video"))
@@ -334,7 +341,7 @@ class BlueskyInfoExtractor(BlueskyExtractor):
     def items(self):
         self._metadata_user = True
         self.api._did_from_actor(self.groups[0])
-        return iter(((Message.Directory, "", self._user),))
+        return iter(((Message.Directory, "", self._user.copy()),))
 
 
 class BlueskyAvatarExtractor(BlueskyExtractor):
@@ -546,25 +553,32 @@ class BlueskyAPI():
             self.log.info("Refreshing access token for %s", username)
             endpoint = "com.atproto.server.refreshSession"
             headers = {"Authorization": "Bearer " + refresh_token}
-            data = None
+            json = None
         else:
             self.log.info("Logging in as %s", username)
             endpoint = "com.atproto.server.createSession"
             headers = None
-            data = {
+            json = {
                 "identifier": username,
                 "password"  : self.password,
             }
 
         url = f"{self.root}/xrpc/{endpoint}"
-        response = self.extractor.request(
-            url, method="POST", headers=headers, json=data, fatal=None)
-        data = response.json()
 
-        if response.status_code != 200:
-            self.log.debug("Server response: %s", data)
-            raise self.extractor.exc.AuthenticationError(
-                f"\"{data.get('error')}: {data.get('message')}\"")
+        while True:
+            response = self.extractor.request(
+                url, method="POST", headers=headers, json=json, fatal=None)
+            data = response.json()
+
+            if data.get("error") == "AuthFactorTokenRequired":
+                json["authFactorToken"] = self.extractor.input(
+                    data.get("message", "Login Code") + ": ")
+            elif response.status_code != 200:
+                self.log.debug("Server response: %s", data)
+                raise self.extractor.exc.AuthenticationError(
+                    f"\"{data.get('error')}: {data.get('message')}\"")
+            else:
+                break  # success
 
         self.extractor.cache_update(_refresh_token_cache, self.username,
                                     data["refreshJwt"], _exp=84*86400)

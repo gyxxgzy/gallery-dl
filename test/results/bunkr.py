@@ -30,6 +30,7 @@ __tests__ = (
     "name"       : "test-テスト-\"&>",
     "slug"       : "test-テスト-\"&>-QjgneIQv.png",
     "num"        : 1,
+    "thumbnail"  : r"re:https://static\.scdn\.st/[^/]+/thumbs/.+",
 },
 
 {
@@ -251,6 +252,7 @@ __tests__ = (
     "filename" : "image-sZrQUeOx",
     "id"       : "sZrQUeOx",
     "name"     : "image",
+    "thumbnail": r"re:https://static\.scdn\.st/[^/]+/thumbs/.+",
 },
 
 {
@@ -352,6 +354,19 @@ __tests__ = (
     "num"       : 1,
     "slug"      : "mX1DBQooiUOJ9",
     "uuid"      : "edf721b7-618b-4214-9305-845e1d210437",
+},
+
+{
+    "#url"     : "https://cdn123.bunkr.ru/image-sZrQUeOx.jpg",
+    "#category": ("lolisafe", "bunkr", "direct-link"),
+    "#class"   : bunkr.BunkrDirectLinkExtractor,
+    "#results" : "https://par1.scdn.st/image-sZrQUeOx.jpg",
+},
+
+{
+    "#url"     : "https://cdn.bunkr.ru/0689562-EIkU3Tbz.mp4",
+    "#category": ("lolisafe", "bunkr", "direct-link"),
+    "#class"   : bunkr.BunkrDirectLinkExtractor,
 },
 
 )

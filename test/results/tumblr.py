@@ -150,6 +150,16 @@ __tests__ = (
 },
 
 {
+    "#url"     : "https://www.tumblr.com/blog/view/t:0COK151uIXGkmk2AhdVXJA",
+    "#comment" : "blog ID URL",
+    "#class"   : tumblr.TumblrUserExtractor,
+    "#range"   : "1-3",
+    "#pattern" : r"https://\d+\.media\.tumblr\.com/[^/?#]+/tumblr_.+_1280\.\w+",
+
+    "blog_name": "nocoweb",
+},
+
+{
     "#url"     : "http://demo.tumblr.com/post/459265350",
     "#class"   : tumblr.TumblrPostExtractor,
     "#pattern" : r"https://\d+\.media\.tumblr\.com/tumblr_[^/_]+_1280.jpg",
@@ -178,18 +188,24 @@ __tests__ = (
     "#url"     : "https://mikf123.tumblr.com/post/167633596145/video-post",
     "#class"   : tumblr.TumblrPostExtractor,
     "#count"   : 2,
+
+    "source": {"video", "inline"},
 },
 
 {
     "#url"     : "https://mikf123.tumblr.com/post/167770026604/audio-post",
     "#class"   : tumblr.TumblrPostExtractor,
     "#count"   : 2,
+
+    "source": {"audio", "inline"},
 },
 
 {
     "#url"     : "https://mikf123.tumblr.com/post/172687798174/photo-post",
     "#class"   : tumblr.TumblrPostExtractor,
     "#count"   : 4,
+
+    "source": "photo",
 },
 
 {
@@ -273,6 +289,18 @@ __tests__ = (
 },
 
 {
+    "#url"     : "https://www.tumblr.com/inkrton/133012034697/favorite-himouto",
+    "#comment" : "'answer' post with duplicate results (gh#9418)",
+    "#class"   : tumblr.TumblrPostExtractor,
+    "#auth"    : True,
+    "#results" : "https://64.media.tumblr.com/d3a6fc21e7b671ee81c9290922eac59d/tumblr_inline_nxnwmvDDDX1r7av0p_1280.jpg",
+    "#count"   : 1,
+
+    "num"  : 1,
+    "count": 1,
+},
+
+{
     "#url"     : "https://www.tumblr.com/oidial/812307562622042112/i-understand-the-concern-but-you-cant-get-between",
     "#comment" : "'reblogs: same-blog' option (#9360)",
     "#class"   : tumblr.TumblrPostExtractor,
@@ -298,6 +326,79 @@ __tests__ = (
         "name": "oidial",
         "uuid": "t:7e50zZpVin78ZAzj-oLhlg",
     },
+},
+
+{
+    "#url"     : "https://akenotumiki.tumblr.com/post/92208031886/7-19",
+    "#comment" : "failed to extract both inline images (gh#6505)",
+    "#class"   : tumblr.TumblrPostExtractor,
+    "#auth"    : True,
+    "#results" : (
+        "https://64.media.tumblr.com/971a911b1dcb4df5c51d7b1cdb5d2ca8/tumblr_inline_n8xz0p3cJc1sgvvyd.png",
+        "https://64.media.tumblr.com/da1f879ec973b2cf2705103d84aea300/tumblr_inline_n8xz62QB901sgvvyd.png",
+    ),
+
+    "blog_name" : "akenotumiki",
+    "count"     : 2,
+    "date"      : "dt:2014-07-19 04:10:00",
+    "id"        : 92208031886,
+    "post_url"  : "https://akenotumiki.tumblr.com/post/92208031886/%E6%9C%AC%E6%97%A5%E3%81%AE%E3%82%89%E3%81%8F%E3%81%8C%E3%81%8D719",
+    "reblog_key": "OsL6VhQH",
+    "slug"      : "本日のらくがき719",
+    "summary"   : "本日のらくがき(7/19)",
+    "tags"      : ["ハナヤマ　らくがき"],
+    "title"     : "本日のらくがき(7/19)",
+    "type"      : "text",
+},
+
+{
+    "#url"     : "https://www.tumblr.com/mikf123/821928825928761344/reblog-text-content-with-inline-media",
+    "#class"   : tumblr.TumblrPostExtractor,
+    "#options" : {"inline": "original"},
+    "#results" : "https://64.media.tumblr.com/f271654b2a1154b9ed5a8eaf19958544/38634e1186017404-c1/s99999x99999/665f81d62b05a26fe7519c3da0a093cfff8f560a.jpg",
+
+    "source": "inline",
+},
+
+{
+    "#url"     : "https://www.tumblr.com/mikf123/821928825928761344/reblog-text-content-with-inline-media",
+    "#class"   : tumblr.TumblrPostExtractor,
+    "#options" : {"inline": "reblog"},
+    "#results" : "https://64.media.tumblr.com/6fde2c979140a9991c539f350173ddd5/6dda6f0489857d66-11/s99999x99999/515897409b32223137fe0febc3e332c854cf3784.png",
+
+    "source": "inline",
+},
+
+{
+    "#url"     : "https://www.tumblr.com/pangur-and-grim/822672895959498752/i-went-to-pick-up-a-new-book-and-thrilled-to-see",
+    "#class"   : tumblr.TumblrPostExtractor,
+    "#results" : (
+        "https://64.media.tumblr.com/52804c305ae921b2ec9345cf2dc7ae1d/31b4ad214a07c090-09/s99999x99999/e65939bc8efe358dffa40f703aeaaf695e7a694a.png",
+        "https://64.media.tumblr.com/2070fab9e473df127a1ddf15a4c8eb76/e961f538a8e5e7b9-e8/s99999x99999/53cbeaea628f4e37c4ee5d2d5215577a2bc243ff.jpg",
+    ),
+
+    "keepreading": False,
+    "source": {"question", "answer"},
+},
+
+{
+    "#url"     : "https://www.tumblr.com/claredelun3e/825259888123035648",
+    "#comment" : "files below 'Keep Reading' cut (#391)",
+    "#class"   : tumblr.TumblrPostExtractor,
+    "#options" : {"file-filter": "keepreading"},
+    "#results" : "https://64.media.tumblr.com/93f5b5aefeec5a2b650cd20a871ce3cc/2ef65ca09d33fb3e-b9/s99999x99999/b2887332f0c18243cf3d7fe4774720f6f7fa6cc8.jpg",
+
+    "count"      : 2,
+    "date"       : "dt:2026-08-18 04:59:19",
+    "extension"  : "jpg",
+    "filename"   : "b2887332f0c18243cf3d7fe4774720f6f7fa6cc8",
+    "hash"       : "b2887332f0c18243cf3d7fe4774720f6f7fa6cc8",
+    "id"         : 825259888123035648,
+    "keepreading": True,
+    "num"        : 2,
+    "post_url"   : "https://www.tumblr.com/blog/view/claredelun3e/825259888123035648",
+    "slug"       : "that-cat-reminded-me-of-him-cat-in-question",
+    "source"     : "inline",
 },
 
 {

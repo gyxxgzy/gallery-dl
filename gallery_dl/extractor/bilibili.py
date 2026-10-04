@@ -44,37 +44,50 @@ class BilibiliArticleExtractor(BilibiliExtractor):
         article = self.api.article(article_id)
 
         # Flatten modules list
-        modules = {}
-        for module in article["detail"]["modules"]:
-            if module["module_type"] == "MODULE_TYPE_BLOCKED":
-                self.log.warning("%s: Blocked Article\n%s", article_id,
-                                 module["module_blocked"].get("hint_message"))
-            del module["module_type"]
-            modules.update(module)
-        article["detail"]["modules"] = modules
-
-        user = modules["module_author"]
-        article["username"] = user.get("name")
-        article["user_id"] = user.get("mid")
-
         pics = []
-
-        if "module_top" in modules:
-            try:
-                pics.extend(modules["module_top"]["display"]["album"]["pics"])
-            except Exception:
-                pass
-
-        if "module_content" in modules:
-            for paragraph in modules["module_content"]["paragraphs"]:
-                if "pic" not in paragraph:
-                    continue
-
+        modules = {}
+        article["title"] = ""
+        article["content"] = txt = []
+        for module in article["detail"]["modules"]:
+            if m := module.get("module_author"):
+                article["username"] = m.get("name")
+                article["user_id"] = m.get("mid")
+                article["date"] = self.parse_timestamp(m.get("pub_ts"))
+            if m := module.get("module_title"):
+                article["title"] = m.get("text")
+                article["tags"] = m.get("tags")
+            if m := module.get("module_topic"):
+                article["topic"] = m.get("name")
+                article["topic_id"] = m.get("id")
+                article["topic_url"] = m.get("jump_url")
+            if m := module.get("module_blocked"):
+                self.log.warning("%s: Blocked Article\n%s", article_id,
+                                 m.get("hint_message"))
+            if m := module.get("module_top"):
                 try:
-                    pics.extend(paragraph["pic"]["pics"])
+                    pics.extend(m["display"]["album"]["pics"])
                 except Exception:
                     pass
+            if m := module.get("module_content"):
+                for paragraph in m["paragraphs"]:
+                    if "pic" in paragraph:
+                        try:
+                            pics.extend(paragraph["pic"]["pics"])
+                        except Exception:
+                            pass
+                    if "text" in paragraph:
+                        try:
+                            for node in paragraph["text"]["nodes"]:
+                                if n := node.get("word"):
+                                    txt.append(n["words"])
+                                if n := node.get("rich"):
+                                    txt.append(n.get("orig_text") or n["text"])
+                        except Exception:
+                            pass
+            del module["module_type"]
+            modules.update(module)
 
+        article["detail"]["modules"] = modules
         article["count"] = len(pics)
         yield Message.Directory, "", article
 

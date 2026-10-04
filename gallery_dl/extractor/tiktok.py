@@ -10,7 +10,6 @@ from .common import Extractor, Message, Dispatch
 from .. import text, util, ytdl
 import functools
 import itertools
-import binascii
 import hashlib
 import random
 import time
@@ -164,7 +163,7 @@ class TiktokExtractor(Extractor):
         challenge_attempt = False
         while True:
             try:
-                response = self.request(url)
+                response = self.request(url, headers=generate_headers())
                 if response.history and "/login" in response.url:
                     raise self.exc.AuthorizationError(
                         "HTTP redirect to login page "
@@ -247,11 +246,11 @@ class TiktokExtractor(Extractor):
 
     def _solve_challenge(self, html):
         cs = text.extr(text.extr(html, 'id="cs"', '>'), 'class="', '"')
-        c = util.json_loads(binascii.a2b_base64(cs + "==").decode())
+        c = util.json_loads(util.b64decode(cs + "=="))
 
         # find index of expected digest
-        expected = binascii.a2b_base64(c["v"]["c"] + "==")
-        base = hashlib.sha256(binascii.a2b_base64(c["v"]["a"] + "=="))
+        expected = util.b64rdecode(c["v"]["c"] + "==")
+        base = hashlib.sha256(util.b64rdecode(c["v"]["a"] + "=="))
         for idx in range(1_000_000):
             test = base.copy()
             test.update(str(idx).encode())
@@ -268,9 +267,9 @@ class TiktokExtractor(Extractor):
         # set cookie values
         domain = self.cookies_domain
         expires = int(time.time()) + 5
-        c["d"] = binascii.b2a_base64(str(idx).encode(), newline=False).decode()
-        v = binascii.b2a_base64(util.json_dumps(c).encode(), newline=False)
-        self.cookies.set(wci, v.decode(), domain=domain, expires=expires)
+        c["d"] = util.b64encode(str(idx).encode())
+        v = util.b64encode(util.json_dumps(c).encode())
+        self.cookies.set(wci, v, domain=domain, expires=expires)
         if rs:
             self.cookies.set(rci, rs, domain=domain, expires=expires)
 
@@ -1215,7 +1214,7 @@ class TiktokPaginationRequest:
                     cursor,
                     query_parameters
                 )
-                response = extractor.request(url)
+                response = extractor.request(url, headers=generate_headers())
                 return (util.json_loads(response.text), final_parameters)
             except ValueError:
                 if retries == 1:
@@ -1550,3 +1549,15 @@ class TiktokStoryUserListRequest(TiktokPaginationRequest):
     def generate_urls(self):
         return [(id, f"https://www.tiktok.com/@{name}")
                 for id, name in self.items.items()]
+
+
+def generate_headers(min_headers=3, max_headers=8):
+    """Randomize HTTP header fingerprint
+       in an attempt to avoid HTTP Error 403 blockage"""
+    def randletters(min, max):
+        return "".join(random.choices(
+            "bcdfghjklmnpqrstvwxz", k=random.randint(min, max)))
+    return {
+        randletters(8, 24): randletters(16, 32)
+        for _ in range(random.randint(min_headers, max_headers))
+    }

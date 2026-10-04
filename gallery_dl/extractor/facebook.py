@@ -19,7 +19,8 @@ class FacebookExtractor(Extractor):
     """Base class for Facebook extractors"""
     category = "facebook"
     root = "https://www.facebook.com"
-    directory_fmt = ("{category}", "{username}", "{title}{set_id:? (/)/}")
+    directory_fmt = ("{category}", "{username}",
+                     "{title[:220]}{set_id:? (/)/}")
     filename_fmt = "{id}.{extension}"
     archive_fmt = "{id}.{extension}"
 
@@ -34,6 +35,8 @@ class FacebookExtractor(Extractor):
         headers["Sec-Fetch-Site"] = "same-origin"
 
         self.fallback_retries = self.config("fallback-retries", 2)
+        if self.fallback_retries < 0:
+            self.fallback_retries = float("inf")
         self.videos = self.config("videos", True)
         self.author_followups = self.config("author-followups", False)
         self._detect_jump = True
@@ -62,9 +65,7 @@ class FacebookExtractor(Extractor):
                 set_page, '"owner":{"__typename":"User","id":"', '"'
             ),
             "user_pfbid": "",
-            "title": self.decode_all(text.extr(
-                set_page, '"title":{"text":"', '"'
-            )),
+            "title": text.extr(set_page, '"title":{"', '}'),
             "first_photo_id": text.extr(
                 set_page,
                 '{"__typename":"Photo","__isMedia":"Photo","',
@@ -75,6 +76,12 @@ class FacebookExtractor(Extractor):
             )
         }
 
+        if t := directory["title"]:
+            try:
+                directory["title"] = util.json_loads(f'{{"{t}}}').get("text")
+            except Exception as exc:
+                self.log.debug("Failed to extract 'title' metadata")
+                self.log.traceback(exc)
         if directory["user_id"].startswith("pfbid"):
             directory["user_pfbid"] = directory["user_id"]
             directory["user_id"] = (
@@ -119,13 +126,24 @@ class FacebookExtractor(Extractor):
                 photo_page,
                 '"nextMediaAfterNodeId":{"__typename":"Photo","id":"',
                 '"'
-            )
+            ) or text.extr(
+                photo_page,
+                '"nextMedia":{"edges":[{"node":{"__typename":"Photo","id":"',
+                '"'
+            ),
         }
 
         if photo["user_id"].startswith("pfbid"):
             photo["user_pfbid"] = photo["user_id"]
             photo["user_id"] = text.extr(
                 photo_page, r'\"content_owner_id_new\":\"', r'\"')
+
+        if not photo["next_photo_id"]:
+            photo["_next_video"] = True
+            photo["next_photo_id"] = text.extr(
+                photo_page,
+                '"nextMedia":{"edges":[{"node":{"__typename":"Video","id":"',
+                '"')
 
         text.nameext_from_url(photo["url"], photo)
 
@@ -148,7 +166,7 @@ class FacebookExtractor(Extractor):
             text.extr(
                 post_page, '"__isMedia":"Photo"', '"target_group"'
             ), '"url":"', ','
-        )
+        ).replace("\\/", "/").rstrip('"}')
 
         if post_page.count('"__isMedia":"Photo"') > 2:
             post = {
@@ -158,6 +176,8 @@ class FacebookExtractor(Extractor):
         else:
             post = {"set_id": None}
 
+        txt = text.extr(post_page, ',"text":"', '"},')
+        post["post_text"] = util.json_loads(f'"{txt}"')
         post["post_photo"] = first_photo_url
         return post
 
@@ -212,17 +232,18 @@ class FacebookExtractor(Extractor):
                 raw_url.split('BaseURL>', 1)[1]
             )
 
-        if not video["urls"]:
-            return video, audio
+        if video["urls"]:
+            video["url"] = max(
+                video["urls"].items(),
+                key=lambda x: text.parse_int(x[0][:-1])
+            )[1]
 
-        video["url"] = max(
-            video["urls"].items(),
-            key=lambda x: text.parse_int(x[0][:-1])
-        )[1]
-
-        text.nameext_from_url(video["url"], video)
-        audio["filename"] = video["filename"]
-        audio["extension"] = "m4a"
+            text.nameext_from_url(video["url"], video)
+            audio["filename"] = video["filename"]
+            audio["extension"] = "m4a"
+        elif url := text.extr(video_page, '"browser_native_hd_url":"', '"'):
+            video["url"] = util.json_loads(f'"{url}"')
+            text.nameext_from_url(video["url"], video)
 
         return video, audio
 
@@ -251,13 +272,18 @@ class FacebookExtractor(Extractor):
     def extract_set(self, set_data):
         set_id = set_data["set_id"]
         all_photo_ids = [set_data["first_photo_id"]]
+        videos = set()
 
         retries = 0
         i = 0
 
         while i < len(all_photo_ids):
             photo_id = all_photo_ids[i]
-            photo_url = f"{self.root}/photo/?fbid={photo_id}&set={set_id}"
+            if photo_id in videos:
+                photo_url = (f"{self.root}/{set_data['user_id']}/videos/"
+                             f"{set_id}/{photo_id}")
+            else:
+                photo_url = f"{self.root}/photo/?fbid={photo_id}&set={set_id}"
             photo_page = self.photo_page_request_wrapper(photo_url).text
 
             photo = self.parse_photo_page(photo_page)
@@ -271,9 +297,14 @@ class FacebookExtractor(Extractor):
                         )
                         all_photo_ids.append(followup_id)
 
-            if not photo["url"]:
+            if photo["url"]:
+                retries = 0
+                photo.update(set_data)
+                yield Message.Directory, "", photo
+                yield Message.Url, photo["url"], photo
+            elif photo_id not in videos:
                 if retries < self.fallback_retries and self._interval_429:
-                    seconds = self._interval_429()
+                    seconds = self._interval_429(retries + 1)
                     self.log.warning(
                         "Failed to find photo download URL for %s. "
                         "Retrying in %s seconds.", photo_url, seconds,
@@ -287,11 +318,6 @@ class FacebookExtractor(Extractor):
                         ". Skipping."
                     )
                     retries = 0
-            else:
-                retries = 0
-                photo.update(set_data)
-                yield Message.Directory, "", photo
-                yield Message.Url, photo["url"], photo
 
             if not photo["next_photo_id"]:
                 self.log.debug(
@@ -305,14 +331,17 @@ class FacebookExtractor(Extractor):
                         "Extraction is over."
                     )
             elif self._detect_jump and not set_id.startswith('pcb.') and \
-                    int(photo["next_photo_id"]) > int(photo["id"]) + i*120:
+                    photo_id not in videos and photo["id"] and \
+                    (int(photo["next_photo_id"]) >> 1) > int(photo["id"]) :
                 self.log.info(
-                    "Detected jump to the beginning of the set. (%s -> %s)",
-                    photo["id"], photo["next_photo_id"])
-                if self.config("loop", False):
+                    "Detected possible jump to the beginning of the set. "
+                    "(%s -> %s)", photo["id"], photo["next_photo_id"])
+                if self.config("loop", True):
                     all_photo_ids.append(photo["next_photo_id"])
             else:
                 all_photo_ids.append(photo["next_photo_id"])
+                if photo.get("_next_video"):
+                    videos.add(photo["next_photo_id"])
 
             i += 1
 
@@ -439,8 +468,8 @@ class FacebookSetExtractor(FacebookExtractor):
     pattern = (
         BASE_PATTERN +
         r"/(?:(?:media/set|photo)/?\?(?:[^&#]+&)*set=([^&#]+)"
-        r"[^/?#]*(?<!&setextract)$"
-        r"|[^/?#]+/posts/([^/?#]+)"
+        r"[^/?#]*(?<!&setextract)$"  # set_id
+        r"|([^/?#]+/posts/[^?#]+)"   # path aka '/USER/posts/SLUG/ID'
         r"|photo/\?(?:[^&#]+&)*fbid=([^/?&#]+)&set=([^/?&#]+)&setextract"
         r"|(?:groups/)?(?:[^/?#]+/)?(?:permalink|posts)(?:\.php)?"
         r"(?:/(\d+)|\?\w+=([^/?#]+))"
@@ -453,6 +482,7 @@ class FacebookSetExtractor(FacebookExtractor):
         if not set_id:
             set_id = set_id2
 
+        post = None
         if path:
             post_url = f"{self.root}/{path}"
             post_page = self.request(post_url).text
@@ -460,6 +490,7 @@ class FacebookSetExtractor(FacebookExtractor):
 
             set_id = post["set_id"]
             if not set_id:
+                self.kwdict.update(post)
                 params = text.parse_query(post["post_photo"].partition("?")[2])
                 self.groups = (params["fbid"],)
                 return FacebookPhotoExtractor.items(self)
@@ -472,6 +503,8 @@ class FacebookSetExtractor(FacebookExtractor):
         set_data = self.parse_set_page(set_page)
         if first_pid:
             set_data["first_photo_id"] = first_pid
+        if post:
+            set_data.update(post)
 
         return self.extract_set(set_data)
 
@@ -480,12 +513,12 @@ class FacebookVideoExtractor(FacebookExtractor):
     """Base class for Facebook Video extractors"""
     subcategory = "video"
     directory_fmt = ("{category}", "{username}", "{subcategory}")
-    pattern = BASE_PATTERN + r"/(?:[^/?#]+/videos/|watch/?\?v=)([^/?&#]+)"
+    pattern = BASE_PATTERN + r"/([^/?#]+/videos/|watch/?\?v=)([^/?&#]+)"
     example = "https://www.facebook.com/watch/?v=VIDEO_ID"
 
     def items(self):
-        video_id = self.groups[0]
-        video_url = self.root + "/watch/?v=" + video_id
+        path, video_id = self.groups
+        video_url = f"{self.root}/{path}{video_id}"
         video_page = self.request(video_url).text
 
         video, audio = self.parse_video_page(video_page)
@@ -512,7 +545,7 @@ class FacebookInfoExtractor(FacebookExtractor):
 
     def items(self):
         user = self.cache(self._extract_profile, self.groups[0])
-        return iter(((Message.Directory, "", user),))
+        return iter(((Message.Directory, "", user.copy()),))
 
 
 class FacebookAlbumsExtractor(FacebookExtractor):

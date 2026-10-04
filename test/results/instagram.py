@@ -20,6 +20,7 @@ __tests__ = (
         "https://www.instagram.com/stories/instagram/",
         "https://www.instagram.com/instagram/highlights/",
         "https://www.instagram.com/instagram/posts/",
+        "https://www.instagram.com/instagram/photos/",
         "https://www.instagram.com/instagram/reels/",
         "https://www.instagram.com/instagram/tagged/",
     ),
@@ -46,6 +47,14 @@ __tests__ = (
 },
 
 {
+    "#url"     : "https://www.instagram.com/instagram/photos/",
+    "#category": ("", "instagram", "photos"),
+    "#class"   : instagram.InstagramPhotosExtractor,
+    "#range"   : "1-16",
+    "#count"   : ">= 16",
+},
+
+{
     "#url"     : "https://www.instagram.com/instagram/reels/",
     "#category": ("", "instagram", "reels"),
     "#class"   : instagram.InstagramReelsExtractor,
@@ -63,14 +72,6 @@ __tests__ = (
     "tagged_owner_id" : "25025320",
     "tagged_username" : "instagram",
     "tagged_full_name": "Instagram",
-},
-
-{
-    "#url"     : "https://www.instagram.com/kadakaofficial/guide/knit-i-need-collection/18131821684305217/",
-    "#category": ("", "instagram", "guide"),
-    "#class"   : instagram.InstagramGuideExtractor,
-    "#range"   : "1-16",
-    "#count"   : ">= 16",
 },
 
 {

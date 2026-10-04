@@ -12,7 +12,6 @@ from .common import Extractor, Message, Dispatch
 from .. import text, util, dt
 import collections
 import mimetypes
-import binascii
 import time
 
 BASE_PATTERN = (
@@ -123,26 +122,46 @@ class DeviantartExtractor(Extractor):
         url = "https://www.deviantart.com/users/login"
         page = self.request(url).text
 
-        data = {}
-        for item in text.extract_iter(
-                page, '<input type="hidden" name="', '"/>'):
-            name, _, value = item.partition('" value="')
-            data[name] = value
+        def _hidden_inputs(html):
+            data = {}
 
-        challenge = data.get("challenge")
-        if challenge and challenge != "0":
-            self.log.warning("Login requires solving a CAPTCHA")
-            self.log.debug(challenge)
+            for item in text.extract_iter(
+                    html, '<input type="hidden" name="', '"/>'):
+                name, _, value = item.partition('" value="')
+                data[name] = text.unescape(value)
 
+            challenge = data.get("challenge")
+            if challenge and challenge != "0":
+                self.log.warning("Login requires solving a CAPTCHA")
+                self.log.debug(challenge)
+
+            return data
+
+        # username
+        data = _hidden_inputs(page)
         data["username"] = username
+        data["password"] = ""
+        data["remember"] = "on"
+
+        self.sleep(2.0, "login (username)")
+        url = "https://www.deviantart.com/_sisu/do/step2"
+        response = self.request(url, method="POST", data=data)
+        if "st_err=user" in response.url:
+            raise self.exc.AuthorizationError()
+
+        # password
+        data = _hidden_inputs(response.text)
+        data["username"] = ""
         data["password"] = password
         data["remember"] = "on"
 
-        self.sleep(2.0, "login")
+        self.sleep(2.0, "login (password)")
         url = "https://www.deviantart.com/_sisu/do/signin"
         response = self.request(url, method="POST", data=data)
 
         if not response.history:
+            if b"<title>Access to this page has been deni" in response.content:
+                raise self.exc.AuthorizationError("CAPTCHA required")
             raise self.exc.AuthenticationError()
 
         return {cookie.name: cookie.value
@@ -194,7 +213,7 @@ class DeviantartExtractor(Extractor):
                 yield self.commit(deviation, content)
 
             elif self.original and deviation["is_downloadable"]:
-                content = self.api.deviation_download(deviation["deviationid"])
+                content = self.api.deviation_download(deviation)
                 deviation["is_original"] = True
                 yield self.commit(deviation, content)
 
@@ -304,11 +323,10 @@ class DeviantartExtractor(Extractor):
 
         # filename metadata
         sub = text.re(r"\W").sub
-        deviation["filename"] = "".join((
-            sub("_", deviation["title"].lower()), "_by_",
-            sub("_", deviation["author"]["username"].lower()), "-d",
-            deviation["index_base36"],
-        ))
+        deviation["filename"] = (
+            f"{sub('_', deviation['title'].lower())}_by_"
+            f"{sub('_', deviation['author']['username'].lower())}_d"
+            f"{deviation['index_base36']}")
 
     def commit(self, deviation, target):
         url = target["src"]
@@ -415,7 +433,7 @@ class DeviantartExtractor(Extractor):
 
             # parse __INITIAL_STATE__ as fallback
             state = util.json_loads(text.extr(
-                page, 'window.__INITIAL_STATE__ = JSON.parse("', '");')
+                page, 'window.__INITIAL_STATE__ = JSON.parse("', '");\n')
                 .replace("\\\\", "\\").replace("\\'", "'").replace('\\"', '"'))
             deviations = state["@@entities"]["deviation"]
             content = deviations.popitem()[1]["textContent"]
@@ -509,12 +527,12 @@ class DeviantartExtractor(Extractor):
         else:
             public = None
 
-        data = self.api.deviation_download(deviation["deviationid"], public)
+        data = self.api.deviation_download(deviation, public)
         content.update(data)
         deviation["is_original"] = True
 
     def _update_content_image(self, deviation, content):
-        data = self.api.deviation_download(deviation["deviationid"])
+        data = self.api.deviation_download(deviation)
         url = data["src"].partition("?")[0]
         mtype = mimetypes.guess_type(url, False)[0]
         if mtype and mtype.startswith("image/"):
@@ -543,7 +561,7 @@ class DeviantartExtractor(Extractor):
 
         deviation["_fallback"] = (content["src"],)
         deviation["is_original"] = True
-        pl = binascii.b2a_base64(payload).rstrip(b'=\n').decode()
+        pl = util.b64encode(payload)
         content["src"] = (
             # base64 of 'header' is precomputed as 'eyJ0eX...'
             f"{url}?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0.{pl}.")
@@ -1062,6 +1080,7 @@ class DeviantartDeviationExtractor(DeviantartExtractor):
         else:
             url = f"{self.root}/view/{deviation_id}/"
 
+        self.login()
         page = self._limited_request(url, notfound=True).text
         uuid = text.extr(page, '"deviationUuid\\":\\"', '\\')
         if not uuid:
@@ -1082,19 +1101,50 @@ class DeviantartDeviationExtractor(DeviantartExtractor):
         self.archive_fmt = ("g_{_username}_{index}{index_file:?_//}."
                             "{extension}")
 
-        additional_media = util.json_loads(self._unescape_json(
-            additional_media) + "}]")
-        deviation["count"] = 1 + len(additional_media)
+        if additional_media := util.json_loads(self._unescape_json(
+                additional_media) + "}]"):
+            for post in additional_media:
+                if post.get("type") == "video":
+                    medias = DeviantartEclipseAPI(
+                        self).deviation_media(deviation_id)
+                    break
+            else:
+                medias = {}
+            deviation["count"] = 1 + len(additional_media)
+            dev_orig = deviation.copy()
+            dev_orig.pop("content", None)
+            dev_orig.pop("videos", None)
+            dev_orig.pop("flash", None)
+        else:
+            deviation["count"] = 1
+
         yield deviation
 
-        for index, post in enumerate(additional_media):
-            uri = eclipse_media(post["media"], "fullview")[0]
-            deviation["content"]["src"] = uri
-            deviation["num"] += 1
-            deviation["index_file"] = post["fileId"]
-            # Download only works on purchased materials - no way to check
-            deviation["is_downloadable"] = False
-            yield deviation
+        for index, post in enumerate(additional_media, 2):
+            dev = dev_orig.copy()
+            dev["num"] = index
+            dev["index_file"] = post["fileId"]
+            dev["is_downloadable"] = False
+
+            media = medias.get(post["fileId"]) or post["media"]
+            if videos := [fmt for fmt in (media.get("types") or ())
+                          if fmt.get("t") == "video"]:
+                dev["videos"] = [{
+                    "src"     : fmt["b"],
+                    "quality" : fmt.get("q") or str(fmt.get("h", 0)) + "p",
+                    "duration": fmt.get("d"),
+                    "filesize": fmt.get("f"),
+                } for fmt in videos]
+            else:
+                dev["content"] = {"src": eclipse_media(
+                    post["media"], "fullview")[0]}
+                if post.get("type") == "video":
+                    self.log.warning(
+                        "%s: Unable to extract video URL of file %s; falling "
+                        "back to preview image. Provide login credentials or "
+                        "session cookies to be able to access it.",
+                        deviation_id, post.get("filename") or post["fileId"])
+            yield dev
 
 
 class DeviantartScrapsExtractor(DeviantartExtractor):
@@ -1391,17 +1441,26 @@ class DeviantartOAuthAPI():
                 self.log.warning("Private Journal")
         return content
 
-    def deviation_download(self, deviation_id, public=None):
+    def deviation_download(self, deviation, public=None):
         """Get the original file download (if allowed)"""
-        endpoint = "/deviation/download/" + deviation_id
+        endpoint = "/deviation/download/" + deviation["deviationid"]
         params = {"mature_content": self.mature}
 
+        if public is None:
+            public = self.public
+        self.log.info("%s: Requesting download URL with %s token",
+                      deviation["index"], "public" if public else "private")
         try:
             return self._call(
                 endpoint, params=params, public=public, log=False)
-        except Exception:
-            if not self.refresh_token_key:
+        except self.exc.AuthorizationError as exc:
+            if isinstance(exc.message, dict):
+                self.log.error("%s: '%s'", deviation["index"],
+                               exc.message.get("error_description"))
+            if not public or not self.refresh_token_key:
                 raise
+            self.log.info("%s: Retrying with private token",
+                          deviation["index"])
             return self._call(endpoint, params=params, public=False)
 
     def deviation_metadata(self, deviations):
@@ -1555,7 +1614,9 @@ class DeviantartOAuthAPI():
                 raise self.exc.NotFoundError("user or group")
             if error in {"Deviation not downloadable.",
                          "Only subscribers may have access to this download."}:
-                raise self.exc.AuthorizationError()
+                raise self.exc.AuthRequired()
+            if error == "Free download limit reached.":
+                raise self.exc.AuthorizationError(data)
 
             self.log.debug(response.text)
             msg = f"API responded with {status} {response.reason}"
@@ -1747,6 +1808,11 @@ class DeviantartEclipseAPI():
             "expand"          : "deviation.related",
             "da_minor_version": "20230710",
         }
+        return self._call(endpoint, params)
+
+    def deviation_media(self, deviation_id):
+        endpoint = "/_puppy/dadeviation/media"
+        params = {"deviationid": deviation_id}
         return self._call(endpoint, params)
 
     def gallery_scraps(self, user, offset=0):

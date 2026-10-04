@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2022-2025 Mike Fährmann
+# Copyright 2022-2026 Mike Fährmann
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License version 2 as
@@ -254,12 +254,20 @@ def _firefox_cookies_database(browser_name, profile=None, container=None):
             identities = ()
 
         for context in identities:
-            if container == context.get("name") or container == text.extr(
-                    context.get("l10nID", ""), "userContext", ".label"):
-                container_id = context["userContextId"]
-                break
+            if c := context.get("name"):
+                if c == container:
+                    break
+            elif c := context.get("l10nId"):
+                if c.startswith("user-context-") and c[13:] == container:
+                    break
+                if c.rpartition("-")[2] == container:
+                    break
+            elif c := context.get("l10nID"):
+                if text.extr(c, "userContext", ".label") == container:
+                    break
         else:
             raise ValueError(f"Unable to find Firefox container '{container}'")
+        container_id = context["userContextId"]
         _log_debug("Only loading cookies from container '%s' (ID %s)",
                    container, container_id)
 
@@ -287,9 +295,9 @@ def _firefox_browser_directory(browser_name):
         }[browser_name]
     else:
         home = os.path.expanduser("~")
+        config = (os.environ.get("XDG_CONFIG_HOME") or
+                  os.path.expanduser("~/.config"))
         if browser_name == "firefox":
-            config = (os.environ.get("XDG_CONFIG_HOME") or
-                      os.path.expanduser("~/.config"))
             return (
                 # versions >= 147
                 join(config, "mozilla/firefox"),
@@ -301,7 +309,10 @@ def _firefox_browser_directory(browser_name):
                 # Snap
                 home + "/snap/firefox/common/.mozilla/firefox",
             )
-        return f"{home}/.{browser_name}"
+        return (
+            join(config, browser_name),
+            f"{home}/.{browser_name}",
+        )
 
 
 # --------------------------------------------------------------------
@@ -416,7 +427,10 @@ def _chromium_cookies_database(profile, config):
         config["directory"] = (os.path.dirname(profile)
                                if config["profiles"] else profile)
     elif config["profiles"]:
-        search_root = os.path.join(config["directory"], profile)
+        if isinstance(search_root := config["directory"], str):
+            search_root = os.path.join(search_root, profile)
+        else:
+            search_root = [os.path.join(dir, profile) for dir in search_root]
     else:
         _log_warning("%s does not support profiles", config["browser"])
         search_root = config["directory"]
@@ -437,8 +451,10 @@ def _chromium_browser_settings(browser_name):
         appdata_local = os.path.expandvars("%LOCALAPPDATA%")
         appdata_roaming = os.path.expandvars("%APPDATA%")
         browser_dir = {
-            "brave"   : join(appdata_local,
-                             R"BraveSoftware\Brave-Browser\User Data"),
+            "brave"   : (join(appdata_local,
+                              R"BraveSoftware\Brave-Browser\User Data"),
+                         join(appdata_local,
+                              R"BraveSoftware\Brave-Origin\User Data")),
             "chrome"  : join(appdata_local, R"Google\Chrome\User Data"),
             "chromium": join(appdata_local, R"Chromium\User Data"),
             "edge"    : join(appdata_local, R"Microsoft\Edge\User Data"),
@@ -450,7 +466,8 @@ def _chromium_browser_settings(browser_name):
     elif sys.platform == "darwin":
         appdata = os.path.expanduser("~/Library/Application Support")
         browser_dir = {
-            "brave"   : join(appdata, "BraveSoftware/Brave-Browser"),
+            "brave"   : (join(appdata, "BraveSoftware/Brave-Browser"),
+                         join(appdata, "BraveSoftware/Brave-Origin")),
             "chrome"  : join(appdata, "Google/Chrome"),
             "chromium": join(appdata, "Chromium"),
             "edge"    : join(appdata, "Microsoft Edge"),
@@ -463,7 +480,8 @@ def _chromium_browser_settings(browser_name):
         config = (os.environ.get("XDG_CONFIG_HOME") or
                   os.path.expanduser("~/.config"))
         browser_dir = {
-            "brave"   : join(config, "BraveSoftware/Brave-Browser"),
+            "brave"   : (join(config, "BraveSoftware/Brave-Browser"),
+                         join(config, "BraveSoftware/Brave-Origin")),
             "chrome"  : join(config, "google-chrome"),
             "chromium": join(config, "chromium"),
             "edge"    : join(config, "microsoft-edge"),
@@ -1053,6 +1071,8 @@ def pbkdf2_sha1(password, salt, iterations, key_length):
 
 def _decrypt_aes_cbc(ciphertext, key, offset=0,
                      initialization_vector=b" " * 16):
+    if not ciphertext:
+        return ""
     plaintext = aes.unpad_pkcs7(aes.aes_cbc_decrypt_bytes(
         ciphertext, key, initialization_vector))
     if offset:
@@ -1064,6 +1084,8 @@ def _decrypt_aes_cbc(ciphertext, key, offset=0,
 
 
 def _decrypt_aes_gcm(ciphertext, key, nonce, authentication_tag, offset=0):
+    if not ciphertext:
+        return ""
     try:
         plaintext = aes.aes_gcm_decrypt_and_verify_bytes(
             ciphertext, key, authentication_tag, nonce)

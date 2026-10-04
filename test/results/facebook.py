@@ -207,6 +207,77 @@ __tests__ = (
 },
 
 {
+    "#url"     : "https://www.facebook.com/media/set/?set=a.10203952173623829",
+    "#comment" : "'title' with double quotes (#198)",
+    "#class"   : facebook.FacebookSetExtractor,
+    "#range"   : "1",
+
+    "date"          : "dt:2014-11-16 09:09:52",
+    "extension"     : "jpg",
+    "filename"      : "515287746_10233603567690149_8284616838261135423_n",
+    "first_photo_id": "10203952173743832",
+    "followups_ids" : [],
+    "id"            : "10203952173743832",
+    "next_photo_id" : "10203952175743882",
+    "num"           : 1,
+    "set_id"        : "a.10203952173623829",
+    "title"         : """Souvenirs du tram vicinal "Bruxelles-Waterloo" et extensions""",
+    "user_id"       : "1206968555",
+    "user_pfbid"    : "",
+    "username"      : "Serge Bosquet",
+    "caption"       : """\
+L'Arrêt fixe de l'église de Waterloo. A partir de cet endroit, vers Waterloo et Braine-l'Alleud, la voie devenait unique avec évitements aux arrêts.
+Régime des trams directs vers Wavre (source : horaires 1951 et 1962)
+Plaque « Wavre Direct ». Au départ de Bruxelles : seuls les voyageurs de la section « Belle Alliance – Wavre » sont autorisés à monter dans ces trains. Au départ de Wavre : seul l’arrêt de Waterloo-Eglise est obligatoire entre le Monument Gordon et l’avenue Legrand ; ces trains ne s’arrêtent aux autres arrêts qu’à la demande de voyageurs de la section « Wavre – Belle Alliance » qui désirent descendre à un arrêt autorisé. Les voyageurs de la section « Monument Gordon – Bruxelles » qui en profitent pour monter, y sont autorisés pour autant qu’ils dépassent l’avenue Legrand, à Bruxelles. Remarque importante : vers Wavre, entre l’avenue Legrand et le Monument Gordon, tous les arrêts sont facultatifs.\
+""",
+},
+
+{
+    "#url"     : "https://www.facebook.com/EdSheeranMusic/posts/new-kidsuper-merch-available-at-the-loop-tour-x/1552608342898398/",
+    "#comment" : "post link with ID (#228)",
+    "#class"   : facebook.FacebookSetExtractor,
+    "#count"   : 4,
+    "#pattern" : r"https://scontent-.+.fbcdn.net/v/.+",
+
+    "caption"       : "",
+    "date"          : "dt:2026-06-17 16:49:58",
+    "extension"     : "jpg",
+    "first_photo_id": "1552607882898444",
+    "set_id"        : "pcb.1552608342898398",
+    "title"         : "Photos from Ed Sheeran's post",
+    "user_id"       : "100044477407527",
+    "user_pfbid"    : "",
+    "username"      : "Ed Sheeran",
+},
+
+{
+    "#url"     : "https://www.facebook.com/MCDucBao/posts/pfbid02hj9e4Coo1pBjGpeHoaFeAemT1wiG4VzHsuwQQXGp4FHiAXVE7mXqSeWce2UVLKoNl",
+    "#class"   : facebook.FacebookSetExtractor,
+    "#count"   : 4,
+
+    "date"          : "dt:2026-04-19 12:39:19",
+    "first_photo_id": "10164188359360743",
+    "set_id"        : "pcb.10164188403405743",
+    "title"         : "Photos from Bùi Đức Bảo's post",
+    "user_id"       : "607435742",
+    "user_pfbid"    : "",
+    "username"      : "Bùi Đức Bảo",
+    "post_text"     : """\
+20h tối nay trên VTV3, tại Studio3, hẹn gặp mọi người trong một cuộc trò chuyện mà cá nhân Đức Bảo đã chờ đợi... quá lâu
+
+Khách mời là Vinh Khuất - một trong những người đàn ông Việt mà tôi “mê” nhất. Không phải vì điều gì hào nhoáng, mà bởi tài năng, sự sáng tạo và nguồn năng lượng rất riêng mà bạn mang lại.
+
+Tin tôi đi, đây sẽ là một cuộc gặp gỡ đáng theo dõi đấy ạ.
+
+Xem anh em tôi vui vẻ với nhau chưa? Còn Nguyen Hong Nhung thì… tạm thời cho ra rìa nhé!
+
+Hẹn gặp bạn tối nay!
+
+#mcducbao #VTV3 #Studio3\
+""",
+},
+
+{
     "#url"     : "https://www.facebook.com/photo.php?fbid=10165113568399554&set=t.100064860875397&type=3",
     "#class"   : facebook.FacebookPhotoExtractor,
 },

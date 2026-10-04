@@ -39,9 +39,6 @@ class KoofrSharedExtractor(Extractor):
             "Referer"        : referer,
             "X-Client"       : "newfrontend",
             "X-Koofr-Version": "2.1",
-            "Sec-Fetch-Dest" : "empty",
-            "Sec-Fetch-Mode" : "cors",
-            "Sec-Fetch-Site" : "same-origin",
         }
         data = self.request_json(url, params=params, headers=headers)
 
@@ -63,7 +60,7 @@ class KoofrSharedExtractor(Extractor):
         base = (f"{data.get('publicUrlBase') or self.root}"
                 f"/content/links/{uuid}/files/get/")
         headers = {"Referer": referer}
-        password = "&password=" + text.escape(password) if password else ""
+        password = "&password=" + text.quote(password) if password else ""
 
         for dir, files in items:
             dir["post"] = post
@@ -91,8 +88,8 @@ class KoofrSharedExtractor(Extractor):
                     path = ""
                     password += "&force"
 
-                url = (f"{base}{text.escape(name)}"
-                       f"?path=/{text.escape(path)}{password}")
+                url = (f"{base}{text.quote(name)}"
+                       f"?path=/{text.quote(path)}{password}")
                 yield Message.Url, url, file
 
     def _extract_files(self, dir, url, params, headers):

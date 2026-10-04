@@ -110,6 +110,10 @@ class TestPredicate(unittest.TestCase):
     def test_predicate_range(self):
         dummy = None
 
+        pred = util.predicate_range("")
+        with self.assertRaises(exception.StopExtraction):
+            pred(dummy, dummy)
+
         pred = util.predicate_range(" - 3 , 4-  4, 2-6")
         for i in range(6):
             self.assertTrue(pred(dummy, dummy))
@@ -125,9 +129,26 @@ class TestPredicate(unittest.TestCase):
         with self.assertRaises(exception.StopExtraction):
             pred(dummy, dummy)
 
-        pred = util.predicate_range("")
+    def test_range_skip(self):
+        skip = Mock()
+        pred = util.predicate_range("1, 3, 5", skip)
+        skip.asserNotCalled()
+        self.assertTrue(pred(None, None))
+        self.assertFalse(pred(None, None))
+        self.assertTrue(pred(None, None))
+        self.assertFalse(pred(None, None))
+        self.assertTrue(pred(None, None))
         with self.assertRaises(exception.StopExtraction):
-            pred(dummy, dummy)
+            pred(None, None)
+
+        skip = Mock()
+        skip.return_value = 3
+        pred = util.predicate_range("5", skip)
+        skip.asserCalledOncewith(4)
+        self.assertFalse(pred(None, None))
+        self.assertTrue(pred(None, None))
+        with self.assertRaises(exception.StopExtraction):
+            pred(None, None)
 
     def test_predicate_unique(self):
         dummy = None
@@ -723,6 +744,34 @@ class TestOther(unittest.TestCase):
         self.assertEqual(f("3f"), 123)
         self.assertEqual(f("kf12oi"), 1234567890)
 
+    def test_b64encode(self, f=util.b64encode):
+        self.assertEqual(f(b""), "")
+        self.assertEqual(f(b"foo"), "Zm9v")
+        self.assertEqual(f(b"bar"), "YmFy")
+        self.assertEqual(f(b"foobar"), "Zm9vYmFy")
+        self.assertEqual(f(b"Hello World"), "SGVsbG8gV29ybGQ")
+
+    def test_b64rencode(self, f=util.b64rencode):
+        self.assertEqual(f(b""), b"")
+        self.assertEqual(f(b"foo"), b"Zm9v")
+        self.assertEqual(f(b"bar"), b"YmFy")
+        self.assertEqual(f(b"foobar"), b"Zm9vYmFy")
+        self.assertEqual(f(b"Hello World"), b"SGVsbG8gV29ybGQ=")
+
+    def test_b64decode(self, f=util.b64decode):
+        self.assertEqual(f(""), "")
+        self.assertEqual(f("Zm9v"), "foo")
+        self.assertEqual(f("YmFy"), "bar")
+        self.assertEqual(f("Zm9vYmFy"), "foobar")
+        self.assertEqual(f("SGVsbG8gV29ybGQ="), "Hello World")
+        self.assertEqual(f("SGVsbG8gV29ybG=="), "Hello Worl")
+
+    def test_b64rdecode(self, f=util.b64rdecode):
+        self.assertEqual(f(""), b"")
+        self.assertEqual(f("Zm9v"), b"foo")
+        self.assertEqual(f("YmFy"), b"bar")
+        self.assertEqual(f("Zm9vYmFy"), b"foobar")
+
     def test_advance(self):
         items = range(5)
 
@@ -1018,25 +1067,50 @@ value = 123
             token = util.generate_token()
             tokens.add(token)
             self.assertEqual(len(token), 16 * 2)
-            self.assertRegex(token, r"^[0-9a-f]+$")
+            self.assertRegex(token, r"^[0-9a-f]{32}$")
         self.assertGreaterEqual(len(tokens), 99)
 
         token = util.generate_token(80)
         self.assertEqual(len(token), 80 * 2)
-        self.assertRegex(token, r"^[0-9a-f]+$")
+        self.assertRegex(token, r"^[0-9a-f]{160}$")
 
-    def test_format_value(self):
-        self.assertEqual(util.format_value(0)         , "0")
-        self.assertEqual(util.format_value(1)         , "1")
-        self.assertEqual(util.format_value(12)        , "12")
-        self.assertEqual(util.format_value(123)       , "123")
-        self.assertEqual(util.format_value(1234)      , "1.23k")
-        self.assertEqual(util.format_value(12345)     , "12.34k")
-        self.assertEqual(util.format_value(123456)    , "123.45k")
-        self.assertEqual(util.format_value(1234567)   , "1.23M")
-        self.assertEqual(util.format_value(12345678)  , "12.34M")
-        self.assertEqual(util.format_value(123456789) , "123.45M")
-        self.assertEqual(util.format_value(1234567890), "1.23G")
+    def test_generate_uuid(self):
+        pat = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        uuids = set()
+        for _ in range(100):
+            uuid = util.generate_uuid()
+            uuids.add(uuid)
+            self.assertEqual(len(uuid), 36)
+            self.assertRegex(uuid, pat)
+        self.assertGreaterEqual(len(uuids), 99)
+
+    def test_format_bytes_decimal(self):
+        f = util.format_bytes_decimal
+        self.assertEqual(f(0)         , "0")
+        self.assertEqual(f(1)         , "1")
+        self.assertEqual(f(12)        , "12")
+        self.assertEqual(f(123)       , "123")
+        self.assertEqual(f(1234)      , "1.23K")
+        self.assertEqual(f(12345)     , "12.34K")
+        self.assertEqual(f(123456)    , "123.45K")
+        self.assertEqual(f(1234567)   , "1.23M")
+        self.assertEqual(f(12345678)  , "12.34M")
+        self.assertEqual(f(123456789) , "123.45M")
+        self.assertEqual(f(1234567890), "1.23G")
+
+    def test_format_bytes_binary(self):
+        f = util.format_bytes_binary
+        self.assertEqual(f(0)         , "0")
+        self.assertEqual(f(1)         , "1")
+        self.assertEqual(f(12)        , "12")
+        self.assertEqual(f(123)       , "123")
+        self.assertEqual(f(1234)      , "1.21Ki")
+        self.assertEqual(f(12345)     , "12.06Ki")
+        self.assertEqual(f(123456)    , "120.56Ki")
+        self.assertEqual(f(1234567)   , "1.18Mi")
+        self.assertEqual(f(12345678)  , "11.77Mi")
+        self.assertEqual(f(123456789) , "117.74Mi")
+        self.assertEqual(f(1234567890), "1.15Gi")
 
     def test_combine_dict(self):
         self.assertEqual(

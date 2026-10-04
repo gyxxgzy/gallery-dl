@@ -90,15 +90,18 @@ BASE_PATTERN = MastodonExtractor.update({
     "mastodon.social": {
         "root"         : "https://mastodon.social",
         "pattern"      : r"mastodon\.social",
-        "access-token" : "Y06R36SMvuXXN5_wiPKFAEFiQaMSQg0o_hGgc86Jj48",
         "client-id"    : "dBSHdpsnOUZgxOnjKSQrWEPakO3ctM7HmsyoOd4FcRo",
         "client-secret": "DdrODTHs_XoeOsNVXnILTMabtdpWrWOAtrmw91wU1zI",
+    },
+    "mastodon.art": {
+        "root"         : "https://mastodon.art",
+        "pattern"      : r"mastodon\.art",
+        "client-id"    : "pLZ57rlS2GRaDCZBcl7dWAYUuPtqXPU3pXIZO2FPcNQ",
+        "client-secret": "m1bANc_yx1nxpU7amu_AkyzQepbuJ3aiUAxoepussb4",
     },
     "pawoo": {
         "root"         : "https://pawoo.net",
         "pattern"      : r"pawoo\.net",
-        "access-token" : "c12c9d275050bce0dc92169a28db09d7"
-                         "0d62d0a75a8525953098c167eacd3668",
         "client-id"    : "978a25f843ec01e53d09be2c290cd75c"
                          "782bc3b7fdbd7ea4164b9f3c3780c8ff",
         "client-secret": "9208e3d4a7997032cf4f1b0e12e5df38"
@@ -107,10 +110,15 @@ BASE_PATTERN = MastodonExtractor.update({
     "baraag": {
         "root"         : "https://baraag.net",
         "pattern"      : r"baraag\.net",
-        "access-token" : "53P1Mdigf4EJMH-RmeFOOSM9gdSDztmrAYFgabOKKE0",
         "client-id"    : "czxx2qilLElYHQ_sm-lO8yXuGwOHxLX9RYYaD0-nq1o",
         "client-secret": "haMaFdMBgK_-BIxufakmI2gFgkYjqmgXGEO2tB-R2xY",
-    }
+    },
+    "aethy": {
+        "root"         : "https://aethy.com",
+        "pattern"      : r"aethy\.com",
+        "client-id"    : "7usJCzmRTVm37KGDkyJhhmvx-iJrv4oShZLdE_5udHs",
+        "client-secret": "f29ef4f54vKFt0BxSceL7DEoE3xu-yQGUQ9RXE4DJ4g",
+    },
 }) + "(?:/web)?"
 
 

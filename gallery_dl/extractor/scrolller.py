@@ -90,13 +90,7 @@ class ScrolllerExtractor(Extractor):
         return data["login"]["token"]
 
     def _request_graphql(self, opname, variables, admin=True):
-        headers = {
-            "Content-Type"  : None,
-            "Origin"        : self.root,
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-site",
-        }
+        headers = {}
         data = {
             "query"        : self.utils("graphql", opname),
             "variables"    : variables,
@@ -164,7 +158,7 @@ class ScrolllerSubredditExtractor(ScrolllerExtractor):
             "filter"  : filter,
             "sortBy"  : sort,
             "limit"   : 50,
-            "isNsfw"  : subreddit["isNsfw"],
+            "nsfw"    : "NSFW" if subreddit["isNsfw"] else "SFW",
         }
         return self._pagination(
             "SubredditChildrenQuery", variables, subreddit["children"])
@@ -173,25 +167,25 @@ class ScrolllerSubredditExtractor(ScrolllerExtractor):
 class ScrolllerUserExtractor(ScrolllerExtractor):
     """Extractor for media from a scrolller Reddit user"""
     subcategory = "user"
-    directory_fmt = ("{category}", "User", "{posted_by}")
+    directory_fmt = ("{category}", "User", "{reddit_posted_by}")
     pattern = BASE_PATTERN + r"/reddit-user/([^/?#]+)(?:/?\?([^#]+))?"
     example = "https://scrolller.com/reddit-user/USER"
 
     def posts(self):
-        query = "UserPostsQuery"
+        query = "RedditUserPostsQuery"
         variables = {
             "username": text.unquote(self.groups[0]),
             "iterator": None,
             "limit"   : 40,
             "filter"  : None,
             "sortBy"  : "RANDOM",
-            "isNsfw"  : True,
+            "nsfw"    : "NSFW",
         }
 
-        posts = self._request_graphql(query, variables)["getUserPosts"]
+        posts = self._request_graphql(query, variables)["getRedditUserPosts"]
         if not posts.get("items"):
             posts = None
-            variables["isNsfw"] = False
+            variables["nsfw"] = "SFW"
 
         return self._pagination(query, variables, posts)
 
@@ -212,7 +206,7 @@ class ScrolllerFollowingExtractor(ScrolllerExtractor):
             "iterator": None,
             "filter"  : None,
             "limit"   : 10,
-            "isNsfw"  : False,
+            "nsfw"    : "SFW",
             "sortBy"  : "RANDOM",
         }
 

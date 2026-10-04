@@ -13,6 +13,8 @@ from .. import text, util, dt
 import collections
 import itertools
 
+BASE_PATTERN = r"(?:https?://)?(?:www\.)?patreon\.com"
+
 
 class PatreonExtractor(Extractor):
     """Base class for patreon extractors"""
@@ -22,7 +24,7 @@ class PatreonExtractor(Extractor):
     directory_fmt = ("{category}", "{creator[full_name]}")
     filename_fmt = "{id}_{title}_{num:>02}.{extension}"
     archive_fmt = "{id}_{num}"
-    useragent = "Patreon/126.9.0.15 (Android; Android 14; Scale/2.10)"
+    useragent = "Patreon/126.24.0.9 (Android; Android 14; Scale/2.10)"
     _warning = True
 
     def _init(self):
@@ -123,10 +125,10 @@ class PatreonExtractor(Extractor):
 
     def _content(self, post):
         if content := post.get("content"):
-            for img in text.extract_iter(
-                    content, '><figure><img src="', '>'):
-                url = text.unescape(img[:img.find('"')])
-                data = {"media_id": text.extr(img, 'media_id="', '"')}
+            pattern = text.re(r'><(?:figure><img|video) src="([^"]+)([^>]*)')
+            for url, attrs in pattern.findall(content):
+                url = text.unescape(url)
+                data = {"media_id": text.extr(attrs, 'media_id="', '"')}
                 yield "content", data, url, self._filename(url) or url
 
     def posts(self):
@@ -365,7 +367,7 @@ class PatreonCollectionExtractor(PatreonExtractor):
     subcategory = "collection"
     directory_fmt = ("{category}", "{creator[full_name]}",
                      "Collections", "{collection[title]} ({collection[id]})")
-    pattern = r"(?:https?://)?(?:www\.)?patreon\.com/collection/(\d+)"
+    pattern = BASE_PATTERN + r"/collection/(\d+)"
     example = "https://www.patreon.com/collection/12345"
 
     def posts(self):
@@ -396,10 +398,26 @@ class PatreonCollectionExtractor(PatreonExtractor):
         return "&sort=" + sort if sort else ""
 
 
+class PatreonPostExtractor(PatreonExtractor):
+    """Extractor for media from a single post"""
+    subcategory = "post"
+    pattern = BASE_PATTERN + r"/(?:[^/?#]+/)?posts/(?:[^/?#]*-)?(\d+)"
+    example = "https://www.patreon.com/posts/TITLE-12345"
+
+    def posts(self):
+        url = self._build_url("/posts/" + self.groups[0], "", "")
+        post = self.request_json(url, notfound=True)
+        included = self._transform(post["included"])
+        return (self._process(post["data"], included),)
+
+    def _order(self, sort):
+        return ""
+
+
 class PatreonCreatorExtractor(PatreonExtractor):
     """Extractor for a creator's works"""
     subcategory = "creator"
-    pattern = (r"(?:https?://)?(?:www\.)?patreon\.com"
+    pattern = (BASE_PATTERN +
                r"/(?!(?:home|create|login|signup|search|posts|messages)"
                r"(?:$|[/?#]))"
                r"(?:profile/creators|(?:cw?/)?([^/?#]+)(?:/posts)?)"
@@ -452,6 +470,13 @@ class PatreonCreatorExtractor(PatreonExtractor):
                 page, r'{\"value\":{\"campaign\":{\"data\":{\"id\":\"', '\\"'):
             return cid
 
+        if (curl := text.extr(page, '"contentUrl":', ",")) and \
+                (cid := text.extr(curl, "/campaign/", "/")):
+            return cid
+
+        if cid := text.extr(page, r'\"id\":\"NavigationBar_', '\\"'):
+            return cid
+
         raise self.exc.AbortExtraction("Failed to extract campaign ID")
 
     def _get_filters(self, params):
@@ -465,7 +490,7 @@ class PatreonCreatorExtractor(PatreonExtractor):
 class PatreonUserExtractor(PatreonExtractor):
     """Extractor for media from creators supported by you"""
     subcategory = "user"
-    pattern = r"(?:https?://)?(?:www\.)?patreon\.com/home$"
+    pattern = BASE_PATTERN + r"/home$"
     example = "https://www.patreon.com/home"
 
     def skip_date(self, date):
@@ -483,34 +508,3 @@ class PatreonUserExtractor(PatreonExtractor):
             "&json-api-use-default-includes=false"
         ))
         return self._pagination(url)
-
-
-class PatreonPostExtractor(PatreonExtractor):
-    """Extractor for media from a single post"""
-    subcategory = "post"
-    pattern = r"(?:https?://)?(?:www\.)?patreon\.com/posts/([^/?#]+)"
-    example = "https://www.patreon.com/posts/TITLE-12345"
-
-    def posts(self):
-        if not self._logged_in and \
-                self.session.headers["User-Agent"] is self.useragent:
-            # enable `.m3u8` manifest downloads
-            headers = {"User-Agent":
-                       "Patreon/14.2.1 (Android; Android 11; Scale/2.10)"}
-        else:
-            headers = None
-
-        url = f"{self.root}/posts/{self.groups[0]}"
-        page = self.request(url, headers=headers, notfound=True).text
-        bootstrap = self._extract_bootstrap(page)
-
-        try:
-            post = bootstrap["post"]
-        except KeyError:
-            self.log.debug(bootstrap)
-            if bootstrap.get("campaignDisciplinaryStatus") == "suspended":
-                self.log.warning("Account suspended")
-            return ()
-
-        included = self._transform(post["included"])
-        return (self._process(post["data"], included),)

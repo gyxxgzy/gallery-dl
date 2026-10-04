@@ -9,7 +9,7 @@
 """Extractors for https://www.newgrounds.com/"""
 
 from .common import Extractor, Message, Dispatch
-from .. import text, util, dt
+from .. import text, util
 import itertools
 
 BASE_PATTERN = r"(?:https?://)?(?:www\.)?newgrounds\.com"
@@ -50,7 +50,6 @@ class NewgroundsExtractor(Extractor):
 
     def items(self):
         self.login()
-        metadata = self.metadata()
 
         for post_url in self.posts():
             try:
@@ -61,8 +60,6 @@ class NewgroundsExtractor(Extractor):
                 url = None
 
             if url:
-                if metadata:
-                    post.update(metadata)
                 yield Message.Directory, "", post
                 post["num"] = 0
                 yield Message.Url, url, text.nameext_from_url(url, post)
@@ -94,9 +91,6 @@ class NewgroundsExtractor(Extractor):
     def posts(self):
         """Return URLs of all relevant post pages"""
         return self._pagination(self.__class__.subcategory, self.groups[1])
-
-    def metadata(self):
-        """Return general metadata"""
 
     def login(self):
         if self.cookies_check(self.cookies_names):
@@ -163,7 +157,22 @@ class NewgroundsExtractor(Extractor):
             return {}
 
         if response.status_code >= 400:
-            return {}
+            if "<title>Content Filtered</title>" not in page:
+                return {}
+            self.log.debug('"Content Filtered" response')
+
+            url_if = self.root + "/age-verification/ignore-filter"
+            headers = {"X-CSRF-TOKEN": text.extr(
+                page, 'name="csrf-token" content="', '"')}
+            data = {"url": url}
+            self.request(
+                url_if, method="POST", headers=headers, data=data, fatal=False)
+
+            response = self.request(url, fatal=False)
+            if response.history and "/login" in response.url:
+                self.log.warning("Redirected to 'login' page (%s)",
+                                 response.url)
+                return {}
 
         extr = text.extract_from(page)
         data = extract_data(extr, post_url)
@@ -199,7 +208,7 @@ class NewgroundsExtractor(Extractor):
             "description": text.unescape(extr(':description" content="', '"')),
             "type"       : "art",
             "_type"      : "i",
-            "date"       : dt.parse_iso(extr(
+            "date"       : self.parse_datetime_iso(extr(
                 'itemprop="datePublished" content="', '"')),
             "rating"     : extr('class="rated-', '"'),
             "url"        : full('src="', '"'),
@@ -215,43 +224,50 @@ class NewgroundsExtractor(Extractor):
         data["_index"] = index
 
         if image_data := extr("let imageData =", "\n];"):
-            data["_multi"] = self._extract_images_multi(image_data)
+            multi = self._extract_images_multi(image_data)
+        elif art_images := extr('<div class="art-images', '\n\t\t</div>'):
+            multi = self._extract_images_art(art_images)
         else:
-            if art_images := extr('<div class="art-images', '\n\t\t</div>'):
-                data["_multi"] = self._extract_images_art(art_images, data)
+            # single image post
+            return data
 
+        # multi image post
+        ext = text.ext_from_url(data["url"])
+        exts = ("jpg", "png", "gif")
+        if ext == "webp":
+            ext = "jpg"
+        for img in multi:
+            if text.ext_from_url(url := img["image"]) == "webp":
+                fallback = [url.replace(".webp", "." + e)
+                            for e in exts if e != ext]
+                fallback.append(url)
+                img["image"] = url.replace(".webp", "." + ext)
+                img["_fallback"] = fallback
+        data["_multi"] = multi
         return data
 
     def _extract_images_multi(self, html):
-        data = util.json_loads(html + "]")
-        yield from data[1:]
+        images = util.json_loads(html + "]")
+        del images[0]
+        return images
 
-    def _extract_images_art(self, html, data):
-        ext = text.ext_from_url(data["url"])
-        for url in text.extract_iter(html, 'data-smartload-src="', '"'):
-            url = text.ensure_http_scheme(url)
-            url = url.replace("/medium_views/", "/images/", 1)
-            if text.ext_from_url(url) == "webp":
-                fallback = [url.replace(".webp", "." + e)
-                            for e in ("jpg", "png", "gif") if e != ext]
-                fallback.append(url)
-                yield {
-                    "image"    : url.replace(".webp", "." + ext),
-                    "_fallback": fallback,
-                }
-            else:
-                yield {"image": url}
+    def _extract_images_art(self, html):
+        return [
+            {"image": text.ensure_http_scheme(url.replace(
+                "/medium_views/", "/images/", 1))}
+            for url in text.extract_iter(html, 'data-smartload-src="', '"')
+        ]
 
     def _extract_audio_data(self, extr, url):
         index = url.split("/")[5]
         return {
             "title"      : text.unescape(extr('"og:title" content="', '"')),
             "description": text.unescape(extr(':description" content="', '"')),
+            "url"        : text.unescape(extr('ty="og:audio" content="', '"')),
             "type"       : "audio",
             "_type"      : "a",
-            "date"       : dt.parse_iso(extr(
+            "date"       : self.parse_datetime_iso(extr(
                 'itemprop="datePublished" content="', '"')),
-            "url"        : extr('{"url":"', '"').replace("\\/", "/"),
             "index"      : text.parse_int(index),
             "_index"     : index,
             "rating"     : "",
@@ -263,12 +279,14 @@ class NewgroundsExtractor(Extractor):
         type = extr('og:type" content="', '"')
         descr = extr('"og:description" content="', '"')
         src = extr('{"url":"', '"')
+        if not src and self.flash:
+            src = extr('swf: "', '"')
 
         if src:
             src = src.replace("\\/", "/")
             formats = ()
             type = extr(',"description":"', '"')
-            date = dt.parse_iso(extr(
+            date = self.parse_datetime_iso(extr(
                 'itemprop="datePublished" content="', '"'))
             if type:
                 type = type.rpartition(" ")[2].lower()
@@ -527,6 +545,7 @@ class NewgroundsSearchExtractor(NewgroundsExtractor):
         self.query = text.parse_query(query)
 
     def posts(self):
+        self.kwdict["search_tags"] = self.query.get("terms", "")
         if suitabilities := self.query.get("suitabilities"):
             data = {"view_suitability_" + s: "on"
                     for s in suitabilities.split(",")}
@@ -534,9 +553,6 @@ class NewgroundsSearchExtractor(NewgroundsExtractor):
                          method="POST", data=data)
         return self._pagination_search(
             "/search/conduct/" + self._path, self.query)
-
-    def metadata(self):
-        return {"search_tags": self.query.get("terms", "")}
 
     def _pagination_search(self, path, params):
         url = self.root + path

@@ -217,6 +217,7 @@ __tests__ = (
         "captions"         : True,
         "comments"         : True,
     },
+    "#results"     : "https://i.pximg.net/user-profile/img/2008/06/17/01/28/01/171098_fc06efd15628e2ee252941ae5298b5ff.jpg",
     "#sha1_content": "4e57544480cc2036ea9608103e8f024fa737fe66",
 },
 
@@ -229,7 +230,12 @@ __tests__ = (
         "captions"         : True,
         "comments"         : True,
     },
-    "#pattern" : r"https://i\.pximg\.net/background/img/2021/01/30/16/12/02/194921_af1f71e557a42f499213d4b9eaccc0f8\.jpg",
+    "#results": "https://i.pximg.net/background/img/2021/01/30/16/12/02/194921_af1f71e557a42f499213d4b9eaccc0f8.jpg",
+
+    "_fallback": (
+        "https://i.pximg.net/background/img/2021/01/30/16/12/02/194921_af1f71e557a42f499213d4b9eaccc0f8.png",
+        "https://i.pximg.net/background/img/2021/01/30/16/12/02/194921_af1f71e557a42f499213d4b9eaccc0f8.gif",
+    ),
 },
 
 {
@@ -527,6 +533,16 @@ __tests__ = (
 },
 
 {
+    "#url"     : "https://www.pixiv.net/en/artworks/67841765",
+    "#comment" : "deleted work, KeyError - 'total_comments' (cb#16)",
+    "#class"   : pixiv.PixivWorkExtractor,
+    "#auth"    : True,
+    "#options" : {"comments": True},
+    "#count"   : 0,
+    "#log"     : "67841765: Deleted",
+},
+
+{
     "#url"     : "https://www.pixiv.net/en/artworks/unlisted/eE3fTYaROT9IsZmep386",
     "#class"   : pixiv.PixivUnlistedExtractor,
     "#results" : "https://i.pximg.net/img-original/img/2020/10/15/00/46/12/85017704-149014193e4d3e23a6b8bd5e38b51ed4_p0.png",
@@ -695,6 +711,11 @@ __tests__ = (
 
 {
     "#url"     : "https://www.pixiv.net/search.php?s_mode=s_tag&word=Original",
+    "#class"   : pixiv.PixivSearchExtractor,
+},
+
+{
+    "#url"     : "https://www.pixiv.net/search?q=touhou%20flandre&s_mode=tc&type=artwork",
     "#class"   : pixiv.PixivSearchExtractor,
 },
 

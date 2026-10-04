@@ -226,14 +226,25 @@ def action_wait(opts):
 
 def action_flag(opts):
     flag, value = util.re(
-        r"(?i)(file|post|child|download)(?:\s*[= ]\s*(.+))?"
+        r"(?i)(file|post|child|download|clear)(?:\s*[= ]\s*(.+))?"
     ).match(opts).groups()
     flag = flag.upper()
+
+    if flag == "CLEAR":
+        return (lambda _: util.FLAGS.clear()), None
 
     if value is None:
         value = "stop"
     elif value == "skip":
         value = False
+    elif value == "clear":
+        value = None
+    elif value == "toggle":
+        def _flag_toggle(args):
+            util.FLAGS.__dict__[flag] = \
+                "stop" if util.FLAGS.__dict__[flag] is None else None
+        del value
+        return _flag_toggle, None
     else:
         value = value.lower()
 

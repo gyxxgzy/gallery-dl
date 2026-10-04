@@ -11,6 +11,7 @@
 import os
 import sys
 import json
+import math
 import time
 import random
 import getpass
@@ -49,8 +50,23 @@ def b36encode(num):
     return bencode(num, "0123456789abcdefghijklmnopqrstuvwxyz")
 
 
-def b36decode(data):
-    return int(data, 36) if data else 0
+def b36decode(data_base36):
+    return int(data_base36, 36) if data_base36 else 0
+
+
+def b64encode(s):
+    return binascii.b2a_base64(s).rstrip(b"\n=").decode()
+
+
+def b64rencode(s):
+    return binascii.b2a_base64(s, newline=False)
+
+
+def b64decode(data_base64):
+    return binascii.a2b_base64(data_base64).decode()
+
+
+b64rdecode = binascii.a2b_base64
 
 
 def decrypt_xor(encrypted, key, base64=True, fromhex=False):
@@ -159,18 +175,36 @@ def sha1(s):
 
 def generate_token(size=16):
     """Generate a random token with hexadecimal digits"""
-    return random.getrandbits(size * 8).to_bytes(size, "big").hex()
+    return os.urandom(size).hex()
 
 
-def format_value(value, suffixes="kMGTPEZY"):
+def generate_uuid():
+    """Generate a UUIDv4 in hex representation"""
+    v = bytearray(os.urandom(16))
+    v[6] = (v[6] & 0x0F) | 0x40
+    v[8] = (v[8] & 0x3F) | 0x80
+    v = v.hex()
+    return f'{v[0:8]}-{v[8:12]}-{v[12:16]}-{v[16:20]}-{v[20:32]}'
+
+
+def format_bytes_decimal(value):
     value = str(value)
     value_len = len(value)
     index = value_len - 4
     if index >= 0:
         offset = (value_len - 1) % 3 + 1
         return (f"{value[:offset]}.{value[offset:offset+2]}"
-                f"{suffixes[index // 3]}")
+                f"{SUFFIXES[index // 3]}")
     return value
+
+
+def format_bytes_binary(value):
+    try:
+        index = int(math.log2(value) / 10)
+        return (str(value) if index < 1 else
+                f"{value/1024**index:.2f}{SUFFIXES[index-1]}i")
+    except Exception:
+        return "0"
 
 
 def combine_dict(a, b):
@@ -533,7 +567,7 @@ CODES = {
 
 def HTTPBasicAuth(username, password, type=b"Basic"):
     authorization = type + b" " + binascii.b2a_base64(
-        f"{username}:{password}".encode("latin1"), newline=False)
+        f"{username}:{password}".encode("utf-8"), newline=False)
     del username, password
 
     def _apply(request):
@@ -685,6 +719,8 @@ class Flags():
     def __init__(self):
         self.FILE = self.POST = self.CHILD = self.DOWNLOAD = None
 
+    clear = __init__
+
     def process(self, flag):
         value = self.__dict__[flag]
         if value is False:  # flag was set to "skip"
@@ -692,6 +728,10 @@ class Flags():
                 self.DOWNLOAD = None
                 raise exception.StopDownload()
             return "skip"
+        if value == "pause":
+            while self.__dict__[flag] is not None:
+                time.sleep(1)
+            return "pause"
         self.__dict__[flag] = None
 
         if value == "abort":
@@ -712,8 +752,8 @@ class Flags():
 #  _ch_ver = (_ord_today - 735562) // 28
 
 _ord_today = dt.date.today().toordinal()
-_ff_ver = (_ord_today - 735_513) // 28  # 147 on 2026-01-13
-_ch_ver = (_ord_today - 735_599) // 28  # 143 on 2025-12-18
+_ff_ver = (_ord_today - 735_534) // 28  # 153 on 2026-07-21
+_ch_ver = (_ord_today - 735_597) // 28  # 150 on 2026-06-30
 
 re = text.re
 re_compile = text.re_compile
@@ -722,6 +762,8 @@ NONE = CustomNone()
 FLAGS = Flags()
 WINDOWS = (os.name == "nt")
 SENTINEL = object()
+SYMLINKS = False
+SUFFIXES = "KMGTPEZY"
 EXECUTABLE = getattr(sys, "frozen", False)
 SPECIAL_EXTRACTORS = {"oauth", "recursive", "generic"}
 
@@ -1171,7 +1213,7 @@ def predicate_range(ranges, skip=None, flag=None):
         # and evaluating min/max for a large range is slow
         upper = max(r.stop for r in ranges) - 1
         lower = min(r.start for r in ranges)
-        index = 0 if skip is None or lower <= 1 else skip(lower)
+        index = 0 if skip is None or lower <= 1 else skip(lower - 1)
         del lower
     else:
         index = upper = 0

@@ -29,6 +29,7 @@ class PixivExtractor(Extractor):
     # https://s.pximg.net/common/images/limit_sanity_level_360.png
     # https://s.pximg.net/common/images/limit_unviewable_360.png
     # https://s.pximg.net/common/images/limit_mypixiv_360.png
+    # https://s.pximg.net/common/images/limit_unknown_360.png
 
     def _init(self):
         self.api = PixivAppAPI(self)
@@ -73,7 +74,7 @@ class PixivExtractor(Extractor):
             if self.meta_user:
                 work.update(self.api.user_detail(str(work["user"]["id"])))
             if self.meta_comments:
-                if work["total_comments"] and not work.get("_ajax"):
+                if work.get("total_comments") and not work.get("_ajax"):
                     try:
                         work["comments"] = list(
                             self.api.illust_comments(work["id"]))
@@ -162,13 +163,21 @@ class PixivExtractor(Extractor):
                 work["_mypixiv"] = True
                 self.log.warning("%s: 'My pixiv' locked", work_id)
 
+            elif limit_type == "limit_unknown_360.png":
+                work["_mypixiv"] = True  # stop further processing
+                self.log.warning("%s: Deleted", work_id)
+
             else:
                 work["_mypixiv"] = True  # stop further processing
                 self.log.error("%s: Unknown 'limit' URL type: %s",
                                work_id, limit_type)
 
         elif work["type"] != "ugoira":
-            return ({"url": url, "_fallback": self._fallback_image(url)},)
+            return ({
+                "url": url,
+                "_fallback": (work.get("_fallback") or
+                              self._fallback_image(url)),
+            },)
 
         elif self.load_ugoira:
             try:
@@ -759,7 +768,7 @@ class PixivSearchExtractor(PixivExtractor):
     archive_fmt = "s_{search[word]}_{id}{num}.{extension}"
     directory_fmt = ("{category}", "search", "{search[word]}")
     pattern = (BASE_PATTERN + r"/(?:(?:en/)?tags/([^/?#]+)(?:/[^/?#]+)?/?"
-               r"|search\.php)(?:\?([^#]+))?")
+               r"|search(?:\.php)?)(?:\?([^#]+))?")
     example = "https://www.pixiv.net/en/tags/TAG"
 
     def __init__(self, match):
@@ -779,7 +788,7 @@ class PixivSearchExtractor(PixivExtractor):
             self.word = text.unquote(self.word)
         else:
             try:
-                self.word = query["word"]
+                self.word = query.get("q") or query["word"]
             except KeyError:
                 raise self.exc.AbortExtraction("Missing search term")
 
@@ -798,8 +807,11 @@ class PixivSearchExtractor(PixivExtractor):
 
         target = query.get("s_mode", "s_tag_full")
         target_map = {
+            "tag"  : "partial_match_for_tags",
             "s_tag": "partial_match_for_tags",
+            "tag_full"  : "exact_match_for_tags",
             "s_tag_full": "exact_match_for_tags",
+            "tc"  : "title_and_caption",
             "s_tc": "title_and_caption",
         }
         try:
@@ -982,7 +994,7 @@ class PixivNovelExtractor(PixivExtractor):
             if self.meta_user:
                 novel.update(self.api.user_detail(str(novel["user"]["id"])))
             if self.meta_comments:
-                if novel["total_comments"]:
+                if novel.get("total_comments"):
                     novel["comments"] = list(
                         self.api.novel_comments(novel["id"]))
                 else:

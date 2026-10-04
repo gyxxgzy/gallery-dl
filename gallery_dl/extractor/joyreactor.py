@@ -9,8 +9,7 @@
 """Extractors for https://joyreactor.com/"""
 
 from .common import Extractor, Message
-from .. import text
-import binascii
+from .. import text, util
 
 BASE_PATTERN = r"(?:https?://)?joyreactor\.c(om|c)"
 
@@ -122,17 +121,12 @@ class JoyreactorExtractor(Extractor):
 
     def _request_graphql(self, opname, variables):
         url = "https://api.joyreactor.com/graphql"
-        headers = {
-            "Referer": self.root + "/",
-            "Origin" : self.root,
-        }
         data = {
             "variables": variables,
             "query"    : self.utils("graphql", opname),
         }
         return self.request_json(
-            url, method="POST", headers=headers, json=data,
-            interval=False)["data"]
+            url, method="POST", json=data, interval=False)["data"]
 
     def _pagination(self, url, opname, variables):
         data = path = None
@@ -178,8 +172,7 @@ class JoyreactorPostExtractor(JoyreactorExtractor):
 
         if self.metadata:
             data = self._request_graphql("IdPostPageQuery", {
-                "id": binascii.b2a_base64(b"Post:" + bytes(str(pid), "ascii"),
-                                          newline=False).decode(),
+                "id": util.b64encode(b"Post:" + bytes(str(pid), "ascii")),
                 "isAuthorised": False,
             })["node"]
         else:

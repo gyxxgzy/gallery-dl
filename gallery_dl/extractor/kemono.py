@@ -62,6 +62,13 @@ class KemonoExtractor(Extractor):
         max_posts = self.config("max-posts")
         creator_info = {} if self.config("metadata", True) else None
         exts_archive = util.EXTS_ARCHIVE
+        exts_thmb = util.EXTS_IMAGE
+
+        if self.config("original", False):
+            original = True
+        else:
+            original = False
+            root_thmb = self.root.replace("://", "://img.") + "/thumbnail/data"
 
         if duplicates := self.config("duplicates"):
             if isinstance(duplicates, str):
@@ -165,6 +172,9 @@ class KemonoExtractor(Extractor):
                     text.nameext_from_url(url, file)
                     ext = file["extension"]
 
+                file["file_id"] = file.pop("id", None)
+                file["thumbnail"] = (ext in exts_thmb)
+
                 if ext in exts_archive or \
                         ext == "bin" and file["extension"] in exts_archive:
                     file["type"] = "archive"
@@ -188,19 +198,28 @@ class KemonoExtractor(Extractor):
                 files.append(file)
 
             post["count"] = len(files)
+            post["original"] = original
             yield Message.Directory, "", post
-            for post["num"], file in enumerate(files, 1):
-                if "id" in file:
-                    del file["id"]
-                post.update(file)
-                yield Message.Url, file["url"], post
+            if original:
+                for post["num"], file in enumerate(files, 1):
+                    post.update(file)
+                    yield Message.Url, file["url"], post
+            else:
+                for post["num"], file in enumerate(files, 1):
+                    if file["thumbnail"]:
+                        post.update(file)
+                        post["extension"] = "jpg"
+                        yield Message.Url, root_thmb + file["path"], post
+                    else:
+                        self.log.warning("%s: Skipping %s",
+                                         post["id"], file["path"][7:])
 
     def login(self):
         username, password = self._get_auth_info()
         if username:
             self.cookies_update(self.cache(
-                self._login_impl, (username, self.cookies_domain), password),
-                _exp=3650*86400, _mem=False)
+                self._login_impl, (username, self.cookies_domain), password,
+                _exp=3650*86400, _mem=False))
 
     def _login_impl(self, username, password):
         username = username[0]
@@ -345,6 +364,17 @@ class KemonoExtractor(Extractor):
             for channel in server.pop("channels")
         }
 
+    def _expand(self, posts):
+        if self.config("expand") or \
+                self.config("endpoint") in {"posts+", "legacy+"}:
+            def gen():
+                creator_post = self.api.creator_post
+                for post in posts:
+                    yield creator_post(
+                        post["service"], post["user"], post["id"])
+            return gen()
+        return posts
+
 
 def _validate(response):
     return (response.headers["content-length"] != "9" or
@@ -365,13 +395,9 @@ class KemonoUserExtractor(KemonoExtractor):
         _, _, service, creator_id, query = self.groups
         params = text.parse_query(query)
 
-        if self.config("endpoint") in {"posts+", "legacy+"}:
-            endpoint = self.api.creator_posts_expand
-        else:
-            endpoint = self.api.creator_posts
-
-        return endpoint(service, creator_id,
-                        params.get("o"), params.get("q"), params.get("tag"))
+        return self._expand(self.api.creator_posts(
+            service, creator_id,
+            params.get("o"), params.get("q"), params.get("tag")))
 
 
 class KemonoPostsExtractor(KemonoExtractor):
@@ -382,8 +408,8 @@ class KemonoPostsExtractor(KemonoExtractor):
 
     def posts(self):
         params = text.parse_query(self.groups[4])
-        return self.api.posts(
-            params.get("o"), params.get("q"), params.get("tag"))
+        return self._expand(self.api.posts(
+            params.get("o"), params.get("q"), params.get("tag")))
 
 
 class KemonoPostExtractor(KemonoExtractor):
@@ -454,6 +480,13 @@ class KemonoDiscordExtractor(KemonoExtractor):
             "dict", "object"} else list
         exts_archive = util.EXTS_ARCHIVE
 
+        if self.config("original", False):
+            original = True
+        else:
+            original = False
+            root_thmb = self.root.replace("://", "://img.") + "/thumbnail/data"
+            exts_thmb = util.EXTS_IMAGE
+
         if (order := self.config("order-posts")) and order[0] in {"r", "d"}:
             posts = self.api.discord_channel(channel_id, channel["post_count"])
         else:
@@ -515,10 +548,18 @@ class KemonoDiscordExtractor(KemonoExtractor):
                     else:
                         post_archives.append(archive)
 
-                if url[0] == "/":
-                    url = f"{self.root}/data{url}"
-                elif url.startswith(self.root):
-                    url = f"{self.root}/data{url[20:]}"
+                if original:
+                    if url[0] == "/":
+                        url = f"{self.root}/data{url}"
+                    elif url.startswith(self.root):
+                        url = f"{self.root}/data{url[20:]}"
+                elif ext in exts_thmb:
+                    url = root_thmb + file["path"]
+                    post["extension"] = "jpg"
+                else:
+                    self.log.warning("%s: Skipping %s",
+                                     post["id"], file["path"][7:])
+                    continue
                 yield Message.Url, url, post
 
 
@@ -653,13 +694,6 @@ class KemonoAPI():
         endpoint = f"/v1/{service}/user/{creator_id}/posts"
         params = {"o": offset, "tag": tags, "q": query}
         return self._pagination(endpoint, params, 50)
-
-    def creator_posts_expand(self, service, creator_id,
-                             offset=0, query=None, tags=None):
-        for post in self.creator_posts(
-                service, creator_id, offset, query, tags):
-            yield self.creator_post(
-                service, creator_id, post["id"])["post"]
 
     def creator_announcements(self, service, creator_id):
         endpoint = f"/v1/{service}/user/{creator_id}/announcements"

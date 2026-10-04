@@ -28,6 +28,9 @@ class FlickrExtractor(Extractor):
         self.user = None
         self.item_id = self.groups[0]
 
+        if self.config("urls") == "download":
+            self._file_url = self._file_url_dl
+
     def items(self):
         self.api = FlickrAPI(self)
 
@@ -58,13 +61,16 @@ class FlickrExtractor(Extractor):
         """Return an iterable with all relevant photo objects"""
 
     def _file_url(self, photo):
+        return photo["url"]
+
+    def _file_url_dl(self, photo):
         url = photo["url"]
 
         if "/video/" in url:
             return url
 
         path, _, ext = url.rpartition(".")
-        return path + "_d." + ext
+        return f"{path}_d.{ext}"
 
 
 class FlickrImageExtractor(FlickrExtractor):
@@ -499,7 +505,7 @@ class FlickrAPI(oauth.OAuth1API):
     def _extract_apikey(self):
         extr = self.extractor
         extr.log.info("Retrieving public API key")
-        page = extr.request(extr.root + "/prints").text
+        page = extr.request(extr.root + "/photos/").text
         return text.extr(page, '.flickr.api.site_key = "', '"')
 
     def _extract_format(self, photo):

@@ -12,7 +12,7 @@ import logging
 from . import version, config, option, output, extractor, job, util, exception
 
 __author__ = "Mike Fährmann"
-__copyright__ = "Copyright 2014-2025 Mike Fährmann"
+__copyright__ = "Copyright 2014-2026 Mike Fährmann"
 __license__ = "GPLv2"
 __maintainer__ = "Mike Fährmann"
 __email__ = "mike_faehrmann@web.de"
@@ -83,10 +83,23 @@ def main():
         for opts in args.options:
             config.set(*opts)
 
+        # environment variables
+        if env := config.getg("environment"):
+            if isinstance(env, dict):
+                env = env.dicts()
+            environ = os.environ
+            if config.getg("environment-expand", True):
+                for key, value in env:
+                    environ[key] = util.expand_path(value)
+            else:
+                for key, value in env:  # faster than '.update()'
+                    environ[key] = value
+
         output.configure_standard_streams()
+        output.configure_units()
 
         # signals
-        if signals := config.get((), "signals-ignore"):
+        if signals := config.getg("signals-ignore"):
             import signal
             if isinstance(signals, str):
                 signals = signals.split(",")
@@ -97,7 +110,7 @@ def main():
                 else:
                     signal.signal(signal_num, signal.SIG_IGN)
 
-        if signals := config.get((), "signals-actions"):
+        if signals := config.getg("signals-actions"):
             from . import actions
             actions.parse_signals(signals)
 
@@ -117,7 +130,7 @@ def main():
             output.ANSI = True
 
         # filter environment
-        filterenv = config.get((), "filters-environment", True)
+        filterenv = config.getg("filters-environment", True)
         if filterenv is True:
             pass
         elif not filterenv:
@@ -129,16 +142,20 @@ def main():
                 util.compile_expression = util.compile_expression_defaultdict
 
         # format string options
-        if not config.get((), "format-operator-dot", True):
+        if not config.getg("format-operator-dot", True):
             from . import formatter
             formatter._attrgetter = formatter.operator.attrgetter
-        if separator := config.get((), "format-separator"):
+        if separator := config.getg("format-separator"):
             from . import formatter
             formatter._SEPARATOR = separator
 
         # eval globals
-        if path := config.get((), "globals"):
+        if path := config.getg("globals"):
             util.GLOBALS.update(util.import_file(path).__dict__)
+
+        # symlinks
+        if config.getg("follow-symlinks"):
+            util.SYMLINKS = True
 
         # loglevels
         output.configure_logging(args.loglevel)
@@ -210,7 +227,7 @@ def main():
 File:
   {cache.path()}
 Size:
-  {util.format_value(size)}
+  {output.format_bytes(size)}
 Entries:
 """)
             for key, cnt in sorted(cnts.items(), key=lambda i: (-i[1], i[0])):
@@ -256,7 +273,7 @@ Entries:
             after = os.stat(path).st_size
             if before - after:
                 cache.log.info("Reduced database size by %s bytes",
-                               util.format_value(before - after))
+                               output.format_bytes(before - after))
             return 0
 
         if args.config:
@@ -298,14 +315,24 @@ Entries:
             modules = []
 
             for source in sources:
-                if source:
+                if isinstance(source, str):
                     path = util.expand_path(source)
                     try:
-                        files = os.listdir(path)
+                        files = [name[:-3] for name in os.listdir(path)
+                                 if name.endswith(".py")]
                         modules.append(extractor._modules_path(path, files))
                     except Exception as exc:
                         log.warning("Unable to load modules from %s (%s: %s)",
                                     path, exc.__class__.__name__, exc)
+                elif isinstance(source, dict):
+                    path = util.expand_path(source["from"])
+                    files = source["import"]
+                    try:
+                        modules.append(extractor._modules_path(path, files))
+                    except Exception as exc:
+                        log.warning("Unable to load modules [%s] "
+                                    "from %s (%s: %s)",
+                                    files, path, exc.__class__.__name__, exc)
                 else:
                     modules.append(extractor._modules_internal())
 
@@ -341,20 +368,25 @@ Entries:
                 ))
 
         else:
-            if input_files := config.get((), "input-files"):
+            if input_files := config.getg("input-files"):
                 for input_file in input_files:
                     if isinstance(input_file, str):
                         input_file = (input_file, None)
                     args.input_files.append(input_file)
 
-            if not args.urls and not args.input_files:
-                if args.cookies_from_browser or config.interpolate(
-                        ("extractor",), "cookies"):
-                    args.urls.append("noop")
+            nourls = (not args.urls and not args.input_files)
+            if not args.server:
+                if nourls:
+                    if args.cookies_from_browser or config.interpolate(
+                            ("extractor",), "cookies"):
+                        args.urls.append("noop")
+                    else:
+                        parser.error(
+                            "The following arguments are required: URL\n"
+                            "Use 'gallery-dl --help' to get a list of all "
+                            "options.")
                 else:
-                    parser.error(
-                        "The following arguments are required: URL\nUse "
-                        "'gallery-dl --help' to get a list of all options.")
+                    args.server = config.get(("server",), "enabled", False)
 
             if args.list_urls:
                 jobtype = job.UrlJob
@@ -367,7 +399,11 @@ Entries:
             else:
                 jobtype = args.jobtype or job.DownloadJob
 
-            input_manager = InputManager()
+            if args.server:
+                from . import server
+                input_manager = server.start() if nourls else InputManager()
+            else:
+                input_manager = InputManager()
             input_manager.log = input_log = logging.getLogger("inputfile")
 
             # unsupported file logging handler
@@ -396,9 +432,15 @@ Entries:
                         input_log.error(exc)
                         return getattr(exc, "code", 128)
 
+            if args.server and not nourls and input_manager.urls:
+                return server.send([
+                    url[0] if isinstance(url, tuple) else url
+                    for url in input_manager.urls
+                ])
+
             pformat = config.get(("output",), "progress", True)
-            if pformat and len(input_manager.urls) > 1 and \
-                    args.loglevel < logging.ERROR:
+            if pformat and args.loglevel < logging.ERROR and (
+                    args.server or len(input_manager.urls) > 1):
                 input_manager.progress(pformat)
 
             if catmap := config.interpolate(("extractor",), "category-map"):
@@ -407,6 +449,7 @@ Entries:
                         "coomer"       : "coomerparty",
                         "kemono"       : "kemonoparty",
                         "turbo"        : "saint",
+                        "schalenetwork": "koharu",
                         "naver-blog"   : "naver",
                         "naver-chzzk"  : "chzzk",
                         "naver-webtoon": "naverwebtoon",
@@ -712,6 +755,8 @@ class InputManager():
         try:
             with open(path_tmp, "w", encoding="utf-8") as fp:
                 fp.writelines(lines)
+            if util.SYMLINKS and os.path.islink(path):
+                path = os.path.realpath(path)
             os.replace(path_tmp, path)
         except Exception as exc:
             self.log.warning(

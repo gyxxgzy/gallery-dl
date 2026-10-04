@@ -15,12 +15,12 @@ from .. import text, util, dt, oauth
 BASE_PATTERN = (
     r"(?:tumblr:(?:https?://)?([^/]+)|"
     r"(?:https?://)?"
-    r"(?:(?:www\.)?tumblr\.com/(?:blog/(?:view/)?)?([\w-]+)|"
+    r"(?:(?:www\.)?tumblr\.com/(?:blog/(?:view/)?)?([\w:-]+)|"
     r"([\w-]+\.tumblr\.com)))"
 )
 
-POST_TYPES = frozenset(("text", "quote", "link", "answer", "video",
-                        "audio", "photo", "chat", "search"))
+POST_TYPES = {"text", "quote", "link", "answer", "video",
+              "audio", "photo", "chat", "search"}
 
 
 class TumblrExtractor(Extractor):
@@ -32,7 +32,9 @@ class TumblrExtractor(Extractor):
 
     def _init(self):
         if name := self.groups[1]:
-            self.blog = name + ".tumblr.com"
+            if not name.startswith("t:"):
+                name += ".tumblr.com"
+            self.blog = name
         else:
             self.blog = self.groups[0] or self.groups[2]
 
@@ -50,6 +52,14 @@ class TumblrExtractor(Extractor):
             self.api.posts_type = next(iter(self.types))
         elif not self.types:
             self.log.warning("no valid post types selected")
+
+        if il := self.inline:
+            if il == "reblog":
+                self._extract_body = lambda p: p["reblog"]["comment"]
+            elif il == "original":
+                self._extract_body = lambda p: (p["reblog"]["tree_html"] or
+                                                p["reblog"]["comment"])
+            self.inline = True
 
         if self.reblogs == "same-blog":
             self._skip_reblog = self._skip_reblog_same_blog
@@ -71,9 +81,10 @@ class TumblrExtractor(Extractor):
             self._sub_image = text.re(
                 r"https?://(\d+\.media\.tumblr\.com(?:/[0-9a-f]+)?"
                 r"/tumblr(?:_inline)?_[^_]+)_\d+\.([0-9a-z]+)").sub
-            self._subn_orig_image = text.re(r"/s\d+x\d+/").subn
-            _findall_image = text.re('<img src="([^"]+)"').findall
-            _findall_video = text.re('<source src="([^"]+)"').findall
+            self._subn_orig_image = text.re(
+                r"/s\d+x\d+/").subn
+            self._finditer_inline = text.re(
+                r'<(?:img|source()) [^>]*src="([^"]+)"').finditer
 
         for post in self.posts():
             if self.date_min > post["timestamp"]:
@@ -103,78 +114,70 @@ class TumblrExtractor(Extractor):
                 continue
             post["reblogged"] = reblog
 
+            files = self._extract_files(post)
+            post["date"] = self.parse_timestamp(post["timestamp"])
+            post["count"] = len(files)
             if "trail" in post:
                 del post["trail"]
-            post["date"] = self.parse_timestamp(post["timestamp"])
-            posts = []
+            if "source" in post:
+                post["Source"] = post.pop("source")
 
-            if "photos" in post:  # type "photo" or "link"
-                photos = post["photos"]
-                del post["photos"]
-
-                for photo in photos:
-                    post["photo"] = photo
-
-                    best_photo = photo["original_size"]
-                    for alt_photo in photo["alt_sizes"]:
-                        if (alt_photo["height"] > best_photo["height"] or
-                                alt_photo["width"] > best_photo["width"]):
-                            best_photo = alt_photo
-                    photo.update(best_photo)
-
-                    if self.original and "/s2048x3072/" in photo["url"] and (
-                            photo["width"] == 2048 or photo["height"] == 3072):
-                        photo["url"], fb = self._original_photo(photo["url"])
-                        if fb:
-                            post["_fallback"] = self._original_image_fallback(
-                                photo["url"], post["id"])
-
-                    del photo["original_size"]
-                    del photo["alt_sizes"]
-                    posts.append(
-                        self._prepare_image(photo["url"], post.copy()))
-                    del post["photo"]
-                    post.pop("_fallback", None)
-
-            url = post.get("audio_url")  # type "audio"
-            if url and url.startswith("https://a.tumblr.com/"):
-                posts.append(self._prepare(url, post.copy()))
-
-            if url := post.get("video_url"):  # type "video"
-                posts.append(self._prepare(
-                    self._original_video(url), post.copy()))
-
-            if self.inline and "reblog" in post:  # inline media
-                # only "chat" posts are missing a "reblog" key in their
-                # API response, but they can't contain images/videos anyway
-                body = post["reblog"]["comment"] + post["reblog"]["tree_html"]
-                if "question" in post:
-                    body = (f"{body} {post['question']} "
-                            f"{post.get('answer') or ''}")
-                for url in _findall_image(body):
-                    url, fb = self._original_inline_image(url)
-                    if fb:
-                        post["_fallback"] = self._original_image_fallback(
-                            url, post["id"])
-                    posts.append(self._prepare_image(url, post.copy()))
-                    post.pop("_fallback", None)
-                for url in _findall_video(body):
-                    url = self._original_video(url)
-                    posts.append(self._prepare(url, post.copy()))
-
-            if self.external:  # external links
-                if url := post.get("permalink_url") or post.get("url"):
-                    post["extension"] = None
-                    posts.append((Message.Queue, url, post.copy()))
-                    del post["extension"]
-
-            post["count"] = len(posts)
             yield Message.Directory, "", post
+            for post["num"], (msg, url, file) in enumerate(files, 1):
+                file.update(post)
+                yield msg, url, file
 
-            for num, (msg, url, post) in enumerate(posts, 1):
-                post["num"] = num
-                post["count"] = len(posts)
-                yield msg, url, post
+    def _extract_files(self, post):
+        files = []
+
+        if "photos" in post:  # type "photo" or "link"
+            for photo in post.pop("photos"):
+                file = {"source": "photo", "photo" : photo}
+
+                best_photo = photo["original_size"]
+                for alt_photo in photo["alt_sizes"]:
+                    if (alt_photo["height"] > best_photo["height"] or
+                            alt_photo["width"] > best_photo["width"]):
+                        best_photo = alt_photo
+                photo.update(best_photo)
+                del photo["original_size"]
+                del photo["alt_sizes"]
+
+                if self.original and "/s2048x3072/" in photo["url"] and (
+                        photo["width"] == 2048 or photo["height"] == 3072):
+                    photo["url"], fb = self._original_photo(photo["url"])
+                    if fb:
+                        file["_fallback"] = self._original_image_fallback(
+                            photo["url"], post["id"])
+                files.append(self._prepare_image(photo["url"], file))
+
+        url = post.get("audio_url")  # type "audio"
+        if url and url.startswith("https://a.tumblr.com/"):
+            files.append(self._prepare(url, {"source": "audio"}))
+
+        if url := post.get("video_url"):  # type "video"
+            files.append(self._prepare(
+                self._original_video(url), {"source": "video"}))
+
+        if self.inline and "reblog" in post:  # inline media
+            # only "chat" posts are missing a "reblog" key in their
+            # API response, but they can't contain images/videos anyway
+            seen = set()
+            if txt := post.get("answer"):
+                self._extract_inline(files, post, "answer", seen, txt)
+            if txt := post.get("question"):
+                self._extract_inline(files, post, "question", seen, txt)
+            if txt := self._extract_body(post):
+                self._extract_inline(files, post, "inline", seen, txt)
+
+        if self.external:  # external links
+            if url := post.get("permalink_url") or post.get("url"):
+                files.append((Message.Queue, url, {
+                    "source": "external",
+                    "extension": None,
+                }))
+
+        return files
 
     def items_blogs(self):
         for blog in self.blogs():
@@ -204,39 +207,39 @@ class TumblrExtractor(Extractor):
                                  "', '".join(sorted(invalid)))
             return types
 
-    def _prepare(self, url, post):
-        text.nameext_from_url(url, post)
-        post["hash"] = post["filename"].partition("_")[2]
-        return Message.Url, url, post
+    def _prepare(self, url, file):
+        text.nameext_from_url(url, file)
+        file["hash"] = file["filename"].partition("_")[2]
+        return Message.Url, url, file
 
-    def _prepare_image(self, url, post):
-        text.nameext_from_url(url, post)
+    def _prepare_image(self, url, file):
+        text.nameext_from_url(url, file)
 
         # try ".gifv" (#3095)
         # it's unknown whether all gifs in this case are actually webps
         # incorrect extensions will be corrected by 'adjust-extensions'
-        if post["extension"] == "gif":
-            post["_fallback"] = (url + "v",)
-            post["_http_headers"] = {"Accept":  # copied from chrome 106
+        if file["extension"] == "gif":
+            file["_fallback"] = (url + "v",)
+            file["_http_headers"] = {"Accept":  # copied from chrome 106
                                      "image/avif,image/webp,image/apng,"
                                      "image/svg+xml,image/*,*/*;q=0.8"}
 
-        parts = post["filename"].split("_")
+        parts = file["filename"].split("_")
         try:
-            post["hash"] = parts[1] if parts[1] != "inline" else parts[2]
+            file["hash"] = parts[1] if parts[1] != "inline" else parts[2]
         except IndexError:
             # filename doesn't follow the usual pattern (#129)
-            post["hash"] = post["filename"]
+            file["hash"] = file["filename"]
 
-        return Message.Url, url, post
+        return Message.Url, url, file
 
-    def _prepare_avatar(self, url, post, blog):
-        text.nameext_from_url(url, post)
-        post["num"] = post["count"] = 1
-        post["blog"] = blog
-        post["reblogged"] = False
-        post["type"] = post["id"] = post["hash"] = "avatar"
-        return Message.Url, url, post
+    def _prepare_avatar(self, url, file, blog):
+        text.nameext_from_url(url, file)
+        file["num"] = file["count"] = 1
+        file["blog"] = blog
+        file["reblogged"] = False
+        file["type"] = file["id"] = file["hash"] = "avatar"
+        return Message.Url, url, file
 
     def _skip_reblog(self, _):
         return not self.reblogs
@@ -246,6 +249,33 @@ class TumblrExtractor(Extractor):
             return post["blog"]["uuid"] != post.get("reblogged_root_uuid")
         except Exception:
             return self.blog != post.get("reblogged_root_uuid")
+
+    def _extract_body(self, post):
+        rb = post["reblog"]
+        return rb["comment"] + rb["tree_html"]
+
+    def _extract_inline(self, files, post, source, seen, txt):
+        more = txt.find(">[[MORE]]<") + 1
+        for match in self._finditer_inline(txt):
+            file = {
+                "source": source,
+                "keepreading": (match.end() > more) if more else False,
+            }
+
+            vid, url = match.groups()
+            if vid is None:
+                if url not in seen:
+                    seen.add(url)
+                    url, fb = self._original_inline_image(url)
+                    if fb:
+                        file["_fallback"] = self._original_image_fallback(
+                            url, post["id"])
+                    files.append(self._prepare_image(url, file))
+            else:
+                url = self._original_video(url)
+                if url not in seen:
+                    seen.add(url)
+                    files.append(self._prepare(url, file))
 
     def _original_photo(self, url):
         resized = url.replace("/s2048x3072/", "/s99999x99999/", 1)
