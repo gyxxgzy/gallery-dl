@@ -18,7 +18,7 @@ class BoostyExtractor(Extractor):
     category = "boosty"
     root = "https://www.boosty.to"
     directory_fmt = ("{category}", "{user[blogUrl]} ({user[id]})",
-                     "{post[date]:%Y-%m-%d} {post[int_id]}")
+                     "{post[date]:%Y-%m-%d} {post[int_id]} {post[title]}")
     filename_fmt = "{num:>02} {file[id]}.{extension}"
     archive_fmt = "{file[id]}"
     cookies_domain = ".boosty.to"
@@ -83,6 +83,9 @@ class BoostyExtractor(Extractor):
 
         if "createdAt" in post:
             post["date"] = self.parse_timestamp(post["createdAt"])
+
+        # normalize 'title' so it can be used in directory names
+        post["title"] = text.sanitize_whitespace(str(post.get("title") or ""))
 
         for block in post["data"]:
             try:
